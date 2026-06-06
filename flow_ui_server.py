@@ -36,6 +36,7 @@ Usage:
 
 import argparse
 import asyncio
+import math
 import os
 import time
 from typing import Dict, List, Set
@@ -191,6 +192,96 @@ async def run_interactive_worker(
             pass
 
 
+# ==============================================================================
+# 3b. SCENARIO PLAYER
+# ==============================================================================
+# A "scenario" drives per-tenant *traffic rate* (QPS) along a curve that repeats
+# every `period` seconds, so you can replay canonical multi-tenant shapes (sine
+# vs cosine, overlapping sines, sudden spikes, day/night batch) hands-free.
+#
+# The player does not touch the load-generation path at all: it simply writes
+# into the same ``control["rates"]`` dict the QPS sliders write to, and flips the
+# server into "qps" mode. The existing per-tenant workers then issue traffic at
+# whatever rate the curve currently dictates. Stopping a scenario zeroes the
+# rates and hands control back to the sliders.
+#
+# Each curve is a small JSON blob ``{"type": ..., "base": ..., "amplitude": ...}``
+# evaluated at a normalized phase ``p`` in [0, 1) (the fraction through the
+# period). ``eval_curve`` is mirrored verbatim in the browser so the on-screen
+# preview matches exactly what the server plays.
+
+
+def eval_curve(curve: dict, p: float, max_val: float) -> float:
+    """Evaluate one traffic curve at normalized phase ``p`` in [0, 1).
+
+    Returns a QPS value clamped to [0, max_val]. Unknown fields are ignored and
+    sensible defaults are applied so partially-specified curves still work.
+    """
+    ctype = curve.get("type", "constant")
+    base = float(curve.get("base", 0.0) or 0.0)
+    amp = float(curve.get("amplitude", 0.0) or 0.0)
+    phase = float(curve.get("phase", 0.0) or 0.0)
+    ph = (p + phase) % 1.0
+
+    if ctype == "sine":
+        v = base + amp * math.sin(2 * math.pi * ph)
+    elif ctype == "cosine":
+        v = base + amp * math.cos(2 * math.pi * ph)
+    elif ctype == "spike":
+        pos = float(curve.get("pos", 0.5) or 0.0)
+        width = float(curve.get("width", 0.08) or 0.0)
+        # Distance to the spike center, measured the short way around the loop so
+        # a spike near the period boundary still reads as a single pulse.
+        d = abs(ph - pos)
+        d = min(d, 1.0 - d)
+        v = base + amp if d < width / 2.0 else base
+    elif ctype == "day":
+        # High for the first `duty` fraction of the period, low after.
+        duty = float(curve.get("duty", 0.5) or 0.0)
+        v = base + amp if ph < duty else base
+    elif ctype == "night":
+        # Mirror of "day": low first, high for the trailing `duty` fraction.
+        duty = float(curve.get("duty", 0.5) or 0.0)
+        v = base + amp if ph >= (1.0 - duty) else base
+    else:  # "constant" and any unknown type
+        v = base
+
+    return max(0.0, min(v, max_val))
+
+
+async def run_scenario_driver(control: dict, max_qps: float, stop_event: asyncio.Event) -> None:
+    """Continuously project the active scenario's curves onto ``control["rates"]``.
+
+    Idle (writes nothing) unless a scenario is playing, so the QPS sliders keep
+    working between scenarios. A non-looping scenario zeroes traffic and stops
+    once it has run for a full period.
+    """
+    rates: Dict[str, float] = control["rates"]
+    while not stop_event.is_set():
+        scn = control["scenario"]
+        if scn["playing"]:
+            elapsed = time.monotonic() - scn["start"]
+            period = max(1.0, float(scn["period"]))
+            if not scn["loop"] and elapsed >= period:
+                for fid in rates:
+                    rates[fid] = 0.0
+                scn["playing"] = False
+                scn["elapsed"] = period
+                scn["phase"] = 1.0
+            else:
+                p = (elapsed % period) / period if scn["loop"] else min(elapsed / period, 1.0)
+                scn["elapsed"] = elapsed
+                scn["phase"] = p
+                for fid, curve in scn["curves"].items():
+                    if fid in rates:
+                        rates[fid] = eval_curve(curve, p, max_qps)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=TICK_SEC)
+            break
+        except asyncio.TimeoutError:
+            pass
+
+
 async def prune_loop(metrics: MetricsCollector, tenants: List[Tenant], max_window: float, stop_event: asyncio.Event) -> None:
     """Trim timestamped sample buffers so a long-running session stays bounded.
 
@@ -287,6 +378,7 @@ async def handle_stats(request: web.Request) -> web.Response:
     # target itself can exceed deployment capacity. In open-loop QPS mode the
     # backpressure shows up as in-flight requests piling past capacity.
     saturated = (total_active > capacity) if mode == "qps" else (total_target > capacity)
+    scn = control["scenario"]
     return web.json_response({
         "now": now,
         "ts_ms": int(time.time() * 1000),
@@ -298,6 +390,14 @@ async def handle_stats(request: web.Request) -> web.Response:
         "total_active": total_active,
         "total_qps": total_qps,
         "saturated": saturated,
+        "scenario": {
+            "playing": scn["playing"],
+            "name": scn["name"],
+            "period": scn["period"],
+            "loop": scn["loop"],
+            "elapsed": scn["elapsed"],
+            "phase": scn["phase"],
+        },
         "tenants": per_tenant,
     })
 
@@ -359,6 +459,63 @@ async def handle_set_mode(request: web.Request) -> web.Response:
     return web.json_response({"mode": mode})
 
 
+async def handle_scenario_start(request: web.Request) -> web.Response:
+    """Begin playing a scenario: per-tenant QPS curves over a repeating period.
+
+    Body: {"name": str, "period": float, "loop": bool,
+           "curves": {fairness_id: {"type": ..., "base": ..., ...}}}
+
+    Switches the server into QPS mode; the scenario driver then takes over the
+    per-tenant rates until /api/scenario/stop (or, for non-looping runs, the
+    period elapses).
+    """
+    app = request.app
+    control: dict = app["control"]
+    rates: Dict[str, float] = control["rates"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    curves_in = body.get("curves") or {}
+    if not isinstance(curves_in, dict):
+        return web.json_response({"error": "curves must be an object"}, status=400)
+    curves = {fid: c for fid, c in curves_in.items() if fid in rates and isinstance(c, dict)}
+    if not curves:
+        return web.json_response({"error": "no curves for known tenants"}, status=400)
+
+    try:
+        period = float(body.get("period", 60.0))
+    except (TypeError, ValueError):
+        period = 60.0
+    period = max(1.0, min(period, 3600.0))
+    loop = bool(body.get("loop", True))
+    name = str(body.get("name", ""))[:120]
+
+    control["mode"] = "qps"
+    control["scenario"].update(
+        playing=True,
+        name=name,
+        period=period,
+        loop=loop,
+        start=time.monotonic(),
+        elapsed=0.0,
+        phase=0.0,
+        curves=curves,
+    )
+    return web.json_response({"ok": True, "name": name, "period": period, "loop": loop})
+
+
+async def handle_scenario_stop(request: web.Request) -> web.Response:
+    """Stop the active scenario and zero out all tenant traffic rates."""
+    app = request.app
+    control: dict = app["control"]
+    control["scenario"]["playing"] = False
+    for fid in control["rates"]:
+        control["rates"][fid] = 0.0
+    return web.json_response({"ok": True})
+
+
 async def handle_reset(request: web.Request) -> web.Response:
     """Clear cumulative counters and latency buffers without touching targets."""
     app = request.app
@@ -382,6 +539,18 @@ async def on_startup(app: web.Application) -> None:
         "mode": "concurrency",
         "targets": {t.fairness_id: 0 for t in tenants},
         "rates": {t.fairness_id: 0.0 for t in tenants},
+        # Active scenario state (see run_scenario_driver). `curves` maps
+        # fairness_id -> curve dict; empty/`playing: False` means idle.
+        "scenario": {
+            "playing": False,
+            "name": "",
+            "period": 60.0,
+            "loop": True,
+            "start": 0.0,
+            "elapsed": 0.0,
+            "phase": 0.0,
+            "curves": {},
+        },
     }
 
     connector = aiohttp.TCPConnector(limit=0)
@@ -407,6 +576,9 @@ async def on_startup(app: web.Application) -> None:
         for t in tenants
     ]
     pruner = asyncio.create_task(prune_loop(metrics, tenants, MAX_BUFFER_WINDOW, stop_event))
+    scenario_driver = asyncio.create_task(
+        run_scenario_driver(control, float(args.max_qps), stop_event)
+    )
 
     app["metrics"] = metrics
     app["tenants"] = tenants
@@ -416,6 +588,7 @@ async def on_startup(app: web.Application) -> None:
     app["stop_event"] = stop_event
     app["workers"] = workers
     app["pruner"] = pruner
+    app["scenario_driver"] = scenario_driver
 
 
 async def on_cleanup(app: web.Application) -> None:
@@ -427,10 +600,12 @@ async def on_cleanup(app: web.Application) -> None:
     for w in app["workers"]:
         w.cancel()
     app["pruner"].cancel()
+    app["scenario_driver"].cancel()
     for task in list(generator.inflight):
         task.cancel()
     await asyncio.gather(
-        *app["workers"], app["pruner"], *generator.inflight, return_exceptions=True
+        *app["workers"], app["pruner"], app["scenario_driver"], *generator.inflight,
+        return_exceptions=True,
     )
     await session.close()
 
@@ -461,6 +636,8 @@ def main() -> None:
     app.router.add_post("/api/concurrency", handle_set_concurrency)
     app.router.add_post("/api/qps", handle_set_qps)
     app.router.add_post("/api/mode", handle_set_mode)
+    app.router.add_post("/api/scenario/start", handle_scenario_start)
+    app.router.add_post("/api/scenario/stop", handle_scenario_stop)
     app.router.add_post("/api/reset", handle_reset)
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)

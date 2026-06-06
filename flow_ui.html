@@ -96,17 +96,51 @@
   .codes .ok { color: var(--premium); } .codes .warn { color: var(--standard); } .codes .bad { color: var(--red); }
   .good { color: var(--premium); } .mid { color: var(--standard); } .hot { color: var(--red); }
   .disconnected { color: var(--red); }
+
+  /* Top-level view tabs */
+  .nav { display: inline-flex; gap: 6px; margin-bottom: 16px; }
+  .nav button { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 16px; font-weight: 600; color: var(--muted); }
+  .nav button.active { background: var(--accent); color: #04121f; border-color: var(--accent); }
+  [hidden] { display: none !important; }
+
+  /* Scenario builder */
+  .presets { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 8px; }
+  .preset { text-align: left; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; color: var(--txt); font: inherit; }
+  .preset:hover { border-color: var(--accent); }
+  .preset.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .preset .pname { font-weight: 600; margin-bottom: 3px; }
+  .preset .pdesc { color: var(--muted); font-size: 11px; }
+  .scn-tenant { margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .scn-tenant:last-child { border-bottom: none; }
+  .scn-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 7px 0; }
+  .scn-row label { color: var(--muted); font-size: 12px; }
+  .scn-row input[type=number], .scn-row input[type=text] {
+    width: 96px; background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 7px; font: inherit; font-variant-numeric: tabular-nums;
+  }
+  .scn-row input[type=text] { width: auto; flex: 1; }
+  .scn-row select { width: 150px; }
+  .play-row { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
+  .play-row button.primary { background: var(--premium); color: #04121f; font-weight: 700; border-color: var(--premium); }
+  .play-row button.primary:hover { filter: brightness(1.05); border-color: var(--premium); }
+  .scn-status { color: var(--muted); font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
   <h1 id="page-title">EPP Flow Control — Live</h1>
   <div class="sub">Target <code id="target-url">…</code> · model <code id="model-name">…</code>. <span id="sub-hint">Drag the sliders to change how many requests each flow holds in flight, and watch latency move.</span></div>
 
+  <div class="nav">
+    <button data-view="live" class="active">Live control</button>
+    <button data-view="scenarios">Scenarios</button>
+  </div>
+
   <div id="banner" class="banner healthy">
     <span id="banner-state">HEALTHY</span>
     <span class="cap" id="banner-cap"></span>
   </div>
 
+  <div id="view-live">
   <div class="grid">
     <!-- LEFT: controls -->
     <div class="panel">
@@ -169,6 +203,48 @@
       <div class="cards" id="cards"></div>
     </div>
   </div>
+  </div><!-- /view-live -->
+
+  <div id="view-scenarios" hidden>
+    <div class="grid">
+      <!-- LEFT: scenario builder -->
+      <div class="panel">
+        <h2>Preset scenarios</h2>
+        <div class="presets" id="presets"></div>
+        <h2 style="margin-top:18px;">Builder</h2>
+        <div class="scn-row"><label>Name</label><input type="text" id="scn-name" placeholder="My scenario" /></div>
+        <div class="scn-row"><label title="Length of one full cycle. The plan repeats every period.">Period (s)</label><input type="number" id="scn-period" min="2" max="3600" step="1" value="60" /></div>
+        <div class="scn-row"><label title="Repeat the curve forever (uncheck to play it once and stop).">Loop continuously</label><input type="checkbox" id="scn-loop" checked /></div>
+        <div id="scn-editors"></div>
+        <div class="play-row">
+          <button id="scn-play" class="primary">▶ Play</button>
+          <button id="scn-stop">■ Stop</button>
+          <span class="scn-status" id="scn-status">stopped</span>
+        </div>
+      </div>
+
+      <!-- RIGHT: traffic plan preview + measured latency -->
+      <div class="panel">
+        <h2>Traffic plan — queries / sec</h2>
+        <div class="chart-wrap"><canvas id="preview" height="200"></canvas></div>
+        <div class="legend">
+          <span><i style="background:var(--premium)"></i>premium-tenant</span>
+          <span><i style="background:var(--standard)"></i>standard-tenant</span>
+          <span style="margin-left:auto;color:var(--muted)">target q/s over one period</span>
+        </div>
+
+        <h2 style="margin-top:20px;">Measured latency</h2>
+        <div class="chart-wrap"><canvas id="scn-latency" height="240"></canvas></div>
+        <div class="legend">
+          <span><i style="background:var(--premium)"></i>premium-tenant</span>
+          <span><i style="background:var(--standard)"></i>standard-tenant</span>
+          <span id="scn-y-label" style="margin-left:auto;color:var(--muted)"></span>
+        </div>
+
+        <div class="cards" id="scn-cards"></div>
+      </div>
+    </div>
+  </div><!-- /view-scenarios -->
 
 <script>
 "use strict";
@@ -205,6 +281,54 @@ const MODES = {
 // kept separately per metric key so switching metrics keeps prior data.
 const history = {};      // fid -> [ {t, p95_ttft, med_ttft, max_ttft, p95_total, med_total, max_total} ]
 let lastOk = 0;
+
+// ----- Scenarios view state -----
+let activeView = "live";                       // "live" | "scenarios"
+let scnState = { playing: false, phase: 0, elapsed: 0, period: 60, loop: true, name: "" };
+let scnBuilder = null;                          // { name, period, loop, curves: {fid: curve} }
+let PRESETS = [];
+let activePreset = -1;
+
+// Curve types offered in the builder; `fields` drives which inputs are shown.
+const CURVE_TYPES = [
+  { v: "sine",     label: "Sine" },
+  { v: "cosine",   label: "Cosine" },
+  { v: "constant", label: "Constant" },
+  { v: "spike",    label: "Spike" },
+  { v: "day",      label: "Day (high first half)" },
+  { v: "night",    label: "Night (high second half)" },
+];
+function fieldsFor(type) {
+  switch (type) {
+    case "constant": return ["base"];
+    case "sine":
+    case "cosine":   return ["base", "amplitude", "phase"];
+    case "spike":    return ["base", "amplitude", "pos", "width"];
+    case "day":
+    case "night":    return ["base", "amplitude", "duty"];
+    default:         return ["base", "amplitude"];
+  }
+}
+
+// Mirror of eval_curve() in flow_ui_server.py so the preview matches playback.
+function evalCurve(c, p) {
+  const base = +c.base || 0, amp = +c.amplitude || 0, phase = +c.phase || 0;
+  let ph = (p + phase) % 1; if (ph < 0) ph += 1;
+  let v;
+  switch (c.type) {
+    case "sine":   v = base + amp * Math.sin(2 * Math.PI * ph); break;
+    case "cosine": v = base + amp * Math.cos(2 * Math.PI * ph); break;
+    case "spike": {
+      const pos = c.pos == null ? 0.5 : +c.pos, width = c.width == null ? 0.08 : +c.width;
+      let d = Math.abs(ph - pos); d = Math.min(d, 1 - d);
+      v = d < width / 2 ? base + amp : base; break;
+    }
+    case "day":   { const duty = c.duty == null ? 0.5 : +c.duty; v = ph < duty ? base + amp : base; break; }
+    case "night": { const duty = c.duty == null ? 0.5 : +c.duty; v = ph >= (1 - duty) ? base + amp : base; break; }
+    default:      v = base;   // "constant"
+  }
+  return Math.max(0, Math.min(v, CONFIG.max_qps));
+}
 
 const METRIC_LABELS = {
   p95_ttft: "P95 time-to-first-token (s)",
@@ -253,6 +377,22 @@ async function init() {
   document.getElementById("zero-btn").addEventListener("click", () => {
     for (const t of CONFIG.tenants) setTarget(t.fairness_id, 0, true);
   });
+
+  // ----- scenarios view -----
+  buildPresets();
+  renderPresets();
+  loadPreset(0);   // populate the builder with the first preset
+
+  document.querySelectorAll(".nav button").forEach(b => {
+    b.addEventListener("click", () => setView(b.dataset.view));
+  });
+  document.getElementById("scn-play").addEventListener("click", scnPlay);
+  document.getElementById("scn-stop").addEventListener("click", scnStop);
+  document.getElementById("scn-period").addEventListener("input", e => {
+    scnBuilder.period = +e.target.value || 60; activePreset = -1; renderPresets(); drawPreview("preview");
+  });
+  document.getElementById("scn-loop").addEventListener("change", e => { scnBuilder.loop = e.target.checked; });
+  document.getElementById("scn-name").addEventListener("input", () => { activePreset = -1; renderPresets(); });
 
   window.addEventListener("resize", draw);
   draw();
@@ -391,7 +531,8 @@ function onStats(data) {
     const cutoff = now - 320000;
     while (h.length && h[0].t < cutoff) h.shift();
   }
-  renderCards(data);
+  if (data.scenario) { scnState = data.scenario; updateScnStatus(); }
+  renderCards(data, activeView === "scenarios" ? "scn-cards" : "cards");
   draw();
 }
 
@@ -399,8 +540,9 @@ function onStats(data) {
 function fmt(v, unit) { return (v === null || v === undefined) ? "—" : v.toFixed(2) + (unit || ""); }
 function latClass(v) { if (v === null || v === undefined) return ""; return v < 2 ? "good" : v < 10 ? "mid" : "hot"; }
 
-function renderCards(data) {
-  const root = document.getElementById("cards");
+function renderCards(data, rootId) {
+  const root = document.getElementById(rootId || "cards");
+  if (!root) return;
   const qps = data.mode === "qps";
   const tenants = [...data.tenants].sort((a, b) => b.priority - a.priority);
   root.innerHTML = tenants.map(t => `
@@ -427,12 +569,23 @@ function renderCards(data) {
 }
 
 // ---------- canvas chart ----------
+// Dispatch to whichever view is active. Both views share the same latency
+// history; the scenarios view also redraws its traffic-plan preview.
 function draw() {
-  const canvas = document.getElementById("chart");
   if (!CONFIG) return;
+  if (activeView === "scenarios") {
+    drawLatency("scn-latency", 240, "scn-y-label");
+    drawPreview("preview");
+  } else {
+    drawLatency("chart", 340, "y-label");
+  }
+}
+
+function drawLatency(canvasId, cssH, yLabelId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !CONFIG) return;
   const dpr = window.devicePixelRatio || 1;
   const cssW = canvas.clientWidth || canvas.parentElement.clientWidth;
-  const cssH = 340;
   canvas.width = cssW * dpr; canvas.height = cssH * dpr;
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -443,7 +596,8 @@ function draw() {
   const now = Date.now();
   const tMin = now - chartSpan * 1000, tMax = now;
 
-  document.getElementById("y-label").textContent = METRIC_LABELS[metric];
+  const yLabelEl = document.getElementById(yLabelId);
+  if (yLabelEl) yLabelEl.textContent = METRIC_LABELS[metric];
 
   // find y-max across visible data
   let yMax = 0;
@@ -498,6 +652,208 @@ function draw() {
     ctx.fillStyle = getCSS("--muted"); ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.font = "13px monospace";
     ctx.fillText("Waiting for completed requests… drag a slider up to start traffic.", padL + W / 2, padT + H / 2);
+  }
+}
+
+// ---------- scenarios view ----------
+function setView(v) {
+  activeView = v;
+  document.getElementById("view-live").hidden = v !== "live";
+  document.getElementById("view-scenarios").hidden = v !== "scenarios";
+  document.querySelectorAll(".nav button").forEach(b => b.classList.toggle("active", b.dataset.view === v));
+  draw();
+}
+
+function colorClass(fid) {
+  if (fid === "premium-tenant") return "premium";
+  if (fid === "standard-tenant") return "standard";
+  return "";
+}
+function num(v) { v = +v || 0; return Math.round(v * 100) / 100; }
+
+// Presets are defined as fractions of max_qps so they scale with --max-qps.
+function buildPresets() {
+  const M = CONFIG.max_qps;
+  PRESETS = [
+    {
+      name: "Perfect canonical multi-tenant",
+      desc: "Premium sine, standard cosine — their peaks are offset.",
+      period: 60, loop: true,
+      curves: {
+        "premium-tenant":  { type: "sine",   base: 0.5 * M, amplitude: 0.4 * M, phase: 0 },
+        "standard-tenant": { type: "cosine", base: 0.5 * M, amplitude: 0.4 * M, phase: 0 },
+      },
+    },
+    {
+      name: "Overlapping sine",
+      desc: "Both tiers are sine waves in phase — they peak together.",
+      period: 60, loop: true,
+      curves: {
+        "premium-tenant":  { type: "sine", base: 0.5 * M, amplitude: 0.4 * M, phase: 0 },
+        "standard-tenant": { type: "sine", base: 0.5 * M, amplitude: 0.4 * M, phase: 0 },
+      },
+    },
+    {
+      name: "Spikiness",
+      desc: "Premium is constant; standard spikes suddenly each period.",
+      period: 30, loop: true,
+      curves: {
+        "premium-tenant":  { type: "constant", base: 0.5 * M },
+        "standard-tenant": { type: "spike", base: 0.1 * M, amplitude: 0.9 * M, pos: 0.5, width: 0.08 },
+      },
+    },
+    {
+      name: "Overnight batch",
+      desc: "Premium runs during the 'day'; standard batches at 'night'.",
+      period: 60, loop: true,
+      curves: {
+        "premium-tenant":  { type: "day",   base: 0.1 * M, amplitude: 0.8 * M, duty: 0.5 },
+        "standard-tenant": { type: "night", base: 0.1 * M, amplitude: 0.8 * M, duty: 0.5 },
+      },
+    },
+  ];
+}
+
+function renderPresets() {
+  const root = document.getElementById("presets");
+  root.innerHTML = "";
+  PRESETS.forEach((p, i) => {
+    const b = document.createElement("button");
+    b.className = "preset" + (i === activePreset ? " active" : "");
+    b.innerHTML = `<div class="pname">${p.name}</div><div class="pdesc">${p.desc}</div>`;
+    b.addEventListener("click", () => loadPreset(i));
+    root.appendChild(b);
+  });
+}
+
+function loadPreset(i) {
+  const p = PRESETS[i];
+  activePreset = i;
+  scnBuilder = { name: p.name, period: p.period, loop: p.loop !== false, curves: JSON.parse(JSON.stringify(p.curves)) };
+  document.getElementById("scn-name").value = p.name;
+  document.getElementById("scn-period").value = p.period;
+  document.getElementById("scn-loop").checked = p.loop !== false;
+  buildScnEditors();
+  renderPresets();
+  drawPreview("preview");
+}
+
+function applyFieldVisibility(el, type) {
+  const show = new Set(fieldsFor(type));
+  el.querySelectorAll("[data-show]").forEach(r => { r.style.display = show.has(r.dataset.show) ? "" : "none"; });
+}
+
+function buildScnEditors() {
+  const root = document.getElementById("scn-editors");
+  root.innerHTML = "";
+  const tenants = [...CONFIG.tenants].sort((a, b) => b.priority - a.priority);
+  for (const t of tenants) {
+    const fid = t.fairness_id;
+    const c = scnBuilder.curves[fid] || (scnBuilder.curves[fid] = { type: "constant", base: 0.5 * CONFIG.max_qps, amplitude: 0.3 * CONFIG.max_qps });
+    const color = TENANT_COLORS[fid] || getCSS("--accent");
+    const el = document.createElement("div");
+    el.className = "scn-tenant";
+    const mq = CONFIG.max_qps;
+    el.innerHTML = `
+      <div class="scn-row"><div><span class="dot" style="background:${color}"></span><span class="name ${colorClass(fid)}">${fid}</span></div></div>
+      <div class="scn-row"><label>Curve</label>
+        <select data-fid="${fid}" data-k="type">${CURVE_TYPES.map(ct => `<option value="${ct.v}" ${c.type === ct.v ? "selected" : ""}>${ct.label}</option>`).join("")}</select></div>
+      <div class="scn-row" data-show="base"><label>Base q/s</label><input type="number" min="0" max="${mq}" step="0.1" data-fid="${fid}" data-k="base" value="${num(c.base)}" /></div>
+      <div class="scn-row" data-show="amplitude"><label>Amplitude q/s</label><input type="number" min="0" max="${mq}" step="0.1" data-fid="${fid}" data-k="amplitude" value="${num(c.amplitude)}" /></div>
+      <div class="scn-row" data-show="phase"><label title="Shift the wave along the period (0–1).">Phase</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="phase" value="${num(c.phase || 0)}" /></div>
+      <div class="scn-row" data-show="pos"><label title="Where in the period the spike happens (0–1).">Spike at</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="pos" value="${num(c.pos == null ? 0.5 : c.pos)}" /></div>
+      <div class="scn-row" data-show="width"><label title="Spike width as a fraction of the period.">Spike width</label><input type="number" min="0.01" max="1" step="0.01" data-fid="${fid}" data-k="width" value="${num(c.width == null ? 0.08 : c.width)}" /></div>
+      <div class="scn-row" data-show="duty"><label title="Fraction of the period that is 'on' (high).">Duty</label><input type="number" min="0.05" max="0.95" step="0.05" data-fid="${fid}" data-k="duty" value="${num(c.duty == null ? 0.5 : c.duty)}" /></div>
+    `;
+    root.appendChild(el);
+    applyFieldVisibility(el, c.type);
+    el.querySelectorAll("[data-k]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        const k = inp.dataset.k, f = inp.dataset.fid;
+        scnBuilder.curves[f][k] = (k === "type") ? inp.value : (inp.value === "" ? 0 : +inp.value);
+        if (k === "type") applyFieldVisibility(el, inp.value);
+        activePreset = -1; renderPresets();
+        drawPreview("preview");
+      });
+    });
+  }
+}
+
+function updateScnStatus() {
+  const el = document.getElementById("scn-status");
+  if (!el) return;
+  if (scnState.playing) {
+    el.textContent = `▶ ${scnState.name || "playing"} · ${Math.floor(scnState.elapsed)}s${scnState.loop ? " · loop" : ""}`;
+    el.style.color = getCSS("--premium");
+  } else {
+    el.textContent = "stopped";
+    el.style.color = getCSS("--muted");
+  }
+}
+
+async function scnPlay() {
+  scnBuilder.name = document.getElementById("scn-name").value;
+  scnBuilder.period = +document.getElementById("scn-period").value || 60;
+  scnBuilder.loop = document.getElementById("scn-loop").checked;
+  try {
+    await fetch("/api/scenario/start", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: scnBuilder.name, period: scnBuilder.period, loop: scnBuilder.loop, curves: scnBuilder.curves }),
+    });
+  } catch (e) {}
+}
+
+async function scnStop() {
+  try { await fetch("/api/scenario/stop", { method: "POST" }); } catch (e) {}
+}
+
+// Plot each tenant's traffic curve over one full period, plus a playhead.
+function drawPreview(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !CONFIG || !scnBuilder) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || canvas.parentElement.clientWidth;
+  const cssH = 200;
+  canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const padL = 44, padR = 12, padT = 12, padB = 22;
+  const W = cssW - padL - padR, H = cssH - padT - padB;
+  const N = 240;
+
+  let yMax = CONFIG.max_qps;
+  for (const fid in scnBuilder.curves)
+    for (let i = 0; i <= N; i++) { const v = evalCurve(scnBuilder.curves[fid], i / N); if (v > yMax) yMax = v; }
+  yMax = niceCeil(Math.max(yMax, 0.1));
+
+  ctx.strokeStyle = getCSS("--line"); ctx.fillStyle = getCSS("--muted");
+  ctx.lineWidth = 1; ctx.font = "11px monospace"; ctx.textBaseline = "middle";
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + H * (i / 4), val = yMax * (1 - i / 4);
+    ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + W, y); ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.textAlign = "right"; ctx.fillText(val.toFixed(val < 10 ? 1 : 0), padL - 8, y);
+  }
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  const per = scnBuilder.period;
+  for (let i = 0; i <= 4; i++) { const x = padL + W * (i / 4); ctx.fillText(Math.round(per * i / 4) + "s", x, padT + H + 6); }
+
+  const xOf = p => padL + W * p, yOf = v => padT + H * (1 - v / yMax);
+  for (const fid in scnBuilder.curves) {
+    ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const v = evalCurve(scnBuilder.curves[fid], i / N), x = xOf(i / N), y = yOf(Math.min(v, yMax));
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  if (scnState.playing) {
+    const x = xOf(Math.max(0, Math.min(1, scnState.phase)));
+    ctx.strokeStyle = getCSS("--accent"); ctx.lineWidth = 1.5; ctx.globalAlpha = 0.85;
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + H); ctx.stroke(); ctx.globalAlpha = 1;
   }
 }
 
