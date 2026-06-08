@@ -124,8 +124,34 @@
   .play-row button.primary { background: var(--premium); color: #04121f; font-weight: 700; border-color: var(--premium); }
   .play-row button.primary:hover { filter: brightness(1.05); border-color: var(--premium); }
   .scn-status { color: var(--muted); font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
+  button:disabled, input:disabled, select:disabled { opacity: .45; cursor: not-allowed; }
+  button:disabled:hover { border-color: var(--line); }
 
-  /* Experiment bar (independent of scenario play/stop) */
+  /* Setup vs Running mode banner for the scenario builder */
+  .mode-banner {
+    display: flex; align-items: center; gap: 11px;
+    padding: 10px 13px; border-radius: 10px; margin-bottom: 16px;
+    border: 1px solid var(--line); background: var(--panel2);
+  }
+  .mode-banner .badge {
+    font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 6px; flex-shrink: 0;
+  }
+  .mode-banner .mtext { font-size: 12px; color: var(--muted); line-height: 1.35; }
+  .mode-banner.setup { border-color: rgba(251,189,35,.45); background: rgba(251,189,35,.08); }
+  .mode-banner.setup .badge { background: var(--standard); color: #04121f; }
+  .mode-banner.running { border-color: rgba(54,211,153,.5); background: rgba(54,211,153,.10); }
+  .mode-banner.running .badge { background: var(--premium); color: #04121f; }
+  .mode-banner.paused { border-color: rgba(96,165,250,.5); background: rgba(96,165,250,.10); }
+  .mode-banner.paused .badge { background: var(--accent); color: #04121f; }
+
+  /* While a scenario runs, the whole setup is locked (read-only) */
+  #scn-builder-panel.locked #presets,
+  #scn-builder-panel.locked #saved,
+  #scn-builder-panel.locked #scn-editors,
+  #scn-builder-panel.locked .scn-row { opacity: .5; pointer-events: none; }
+
+  /* Experiment bar — shows experiment status and hosts the Run / Reset controls */
   .exp-bar {
     display: flex; align-items: center; justify-content: space-between; gap: 16px;
     background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
@@ -240,14 +266,18 @@
         <div class="exp-sub" id="exp-sub">Start an experiment to accumulate every metric across the whole run, alongside the moving averages. Independent of Play / Stop, which only drive the traffic curves.</div>
       </div>
       <div class="exp-actions">
-        <input type="text" id="exp-name" placeholder="Experiment name" title="Optional label shown while the experiment runs." />
-        <button id="exp-start" class="primary" title="Mark a start point and begin accumulating cumulative metrics. Does not start the traffic — use Play for that.">● Start experiment</button>
-        <button id="exp-stop" title="Freeze the experiment's final cumulative metrics. Does not stop the traffic.">■ End experiment</button>
+        <button id="scn-play" class="primary" title="Start a fresh experiment: lock the setup and drive these traffic curves while accumulating cumulative metrics from zero.">▶ Run</button>
+        <button id="scn-pause" title="Pause the run: stop the traffic and freeze the experiment's final results for review, keeping the charts on screen. Press Reset to edit again, or Run for a fresh experiment.">⏸ Pause</button>
+        <button id="scn-reset" title="Stop the run, clear the charts, and return to an editable setup.">↺ Reset</button>
       </div>
     </div>
     <div class="grid">
       <!-- LEFT: scenario builder -->
-      <div class="panel">
+      <div class="panel builder-lock" id="scn-builder-panel">
+        <div class="mode-banner setup" id="scn-mode-banner">
+          <span class="badge" id="scn-mode-badge">Setup</span>
+          <span class="mtext" id="scn-mode-text">Build your scenario below, then press Run to start it.</span>
+        </div>
         <h2>Preset scenarios</h2>
         <div class="presets" id="presets"></div>
         <h2 style="margin-top:18px;">Saved scenarios <span id="saved-empty" style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;">— none yet; build one and press Save</span></h2>
@@ -258,9 +288,7 @@
         <div class="scn-row"><label title="Repeat the curve forever (uncheck to play it once and stop).">Loop continuously</label><input type="checkbox" id="scn-loop" checked /></div>
         <div id="scn-editors"></div>
         <div class="play-row">
-          <button id="scn-play" class="primary" title="Drive the traffic curves. Does not start an experiment — use Start experiment for that.">▶ Play</button>
-          <button id="scn-stop" title="Stop driving traffic (zeroes the rates). Does not end an experiment.">■ Stop</button>
-          <button id="scn-save" title="Save the current builder scenario to a file you can re-load and share">💾 Save</button>
+          <button id="scn-save" title="Save the current setup to a file you can re-load and share">💾 Save</button>
           <span class="scn-status" id="scn-status">stopped</span>
         </div>
       </div>
@@ -352,8 +380,12 @@ let lastOk = 0;
 let activeView = "live";                       // "live" | "scenarios"
 let scnWindow = 60;                            // seconds shown in the scenarios dashboard (both charts)
 let scnState = { playing: false, phase: 0, elapsed: 0, period: 60, loop: true, name: "" };
-// Experiment = an independent measurement session (its own start/stop, decoupled
-// from scenario Play/Stop). Mirrors the server's experiment block.
+// Client-only "paused" flag: a run was paused for review. The traffic/experiment
+// are stopped server-side (so scnState.playing is false), but we keep the setup
+// locked and the frozen results on screen until Run (fresh) or Reset (edit).
+let scnPaused = false;
+// Experiment = a measurement session tied to each Run. Mirrors the server's
+// experiment block; started/frozen together with the scenario traffic.
 let expState = { running: false, name: "", elapsed: 0, has_result: false };
 let scnBuilder = null;                          // { name, period, loop, curves: {fid: curve} }
 let PRESETS = [];
@@ -525,9 +557,8 @@ async function init() {
     b.addEventListener("click", () => setView(b.dataset.view));
   });
   document.getElementById("scn-play").addEventListener("click", scnPlay);
-  document.getElementById("scn-stop").addEventListener("click", scnStop);
-  document.getElementById("exp-start").addEventListener("click", expStart);
-  document.getElementById("exp-stop").addEventListener("click", expStop);
+  document.getElementById("scn-pause").addEventListener("click", scnPause);
+  document.getElementById("scn-reset").addEventListener("click", scnReset);
   document.getElementById("scn-save").addEventListener("click", saveScenario);
   document.getElementById("scn-window").addEventListener("input", e => {
     scnWindow = Math.max(10, Math.min(+e.target.value || 60, 300));
@@ -774,7 +805,7 @@ function renderScnCards(data) {
             <div class="col-h"><span class="accent">${expHdr}</span></div>
             ${e
               ? `<div class="metrics">${latRows(e)}${expExtra}</div><div class="codes">${codeRow(e)}</div>`
-              : `<div class="no-exp">No experiment yet — press <b>Start experiment</b> to accumulate cumulative metrics here.</div>`}
+              : `<div class="no-exp">No experiment yet — press <b>Run</b> to accumulate cumulative metrics here.</div>`}
           </div>
         </div>
       </div>`;
@@ -789,30 +820,16 @@ function updateExpStatus() {
   if (expState.running) {
     bar.classList.add("running");
     st.textContent = `● ${expState.name || "Experiment"} running`;
-    sub.textContent = `Accumulating cumulative metrics · ${Math.floor(expState.elapsed)}s elapsed. Play / Stop only change the traffic; they don't affect this.`;
+    sub.textContent = `Accumulating cumulative metrics · ${Math.floor(expState.elapsed)}s elapsed. Press Reset to stop, or Run to start a fresh experiment.`;
   } else if (expState.has_result) {
     bar.classList.remove("running");
     st.textContent = `■ ${expState.name || "Experiment"} ended`;
-    sub.textContent = `Final cumulative results shown below · ran ${Math.floor(expState.elapsed)}s. Start another to measure again.`;
+    sub.textContent = `Final cumulative results shown below · ran ${Math.floor(expState.elapsed)}s. Press Run to start a fresh experiment.`;
   } else {
     bar.classList.remove("running");
     st.textContent = "No experiment running";
-    sub.textContent = "Start an experiment to accumulate every metric across the whole run, alongside the moving averages. Independent of Play / Stop, which only drive the traffic curves.";
+    sub.textContent = "Build a scenario, then press Run to start a fresh experiment — every Run accumulates metrics from zero alongside the moving averages.";
   }
-}
-
-async function expStart() {
-  const name = document.getElementById("exp-name").value.trim();
-  try {
-    await fetch("/api/experiment/start", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-  } catch (e) {}
-}
-
-async function expStop() {
-  try { await fetch("/api/experiment/stop", { method: "POST" }); } catch (e) {}
 }
 
 // ---------- canvas chart ----------
@@ -1121,12 +1138,54 @@ function buildScnEditors() {
   }
 }
 
+// Lock every setup control while a scenario is running, so the running config
+// can't drift out from under the live traffic. Reset is the only way back.
+function setBuilderLocked(locked) {
+  const panel = document.getElementById("scn-builder-panel");
+  if (!panel) return;
+  panel.classList.toggle("locked", locked);
+  panel.querySelectorAll("#scn-editors input, #scn-editors select, #scn-name, #scn-window, #scn-loop")
+    .forEach(el => { el.disabled = locked; });
+  const save = document.getElementById("scn-save");
+  if (save) save.disabled = locked;   // don't save a config mid-run
+}
+
 function updateScnStatus() {
+  const playing = scnState.playing;
+  const paused = !playing && scnPaused;   // run frozen for review
+  // Lock the setup while running, and keep it locked while paused so the frozen
+  // run's config and results stay put until Run (fresh) or Reset (edit).
+  setBuilderLocked(playing || paused);
+
+  // Run is available except while traffic is actively flowing; Pause only makes
+  // sense while running.
+  const play = document.getElementById("scn-play");
+  const pause = document.getElementById("scn-pause");
+  if (play) play.disabled = playing;
+  if (pause) pause.disabled = !playing;
+
+  // Big Setup ↔ Running ↔ Paused banner at the top of the builder.
+  const banner = document.getElementById("scn-mode-banner");
+  if (banner) {
+    banner.classList.toggle("running", playing);
+    banner.classList.toggle("paused", paused);
+    banner.classList.toggle("setup", !playing && !paused);
+    document.getElementById("scn-mode-badge").textContent = playing ? "Running" : paused ? "Paused" : "Setup";
+    document.getElementById("scn-mode-text").textContent = playing
+      ? `Running "${scnState.name || "scenario"}" · ${Math.floor(scnState.elapsed)}s${scnState.loop ? " · looping" : ""}. Editing is locked — press Pause to freeze, or Reset to return to setup.`
+      : paused
+      ? `Paused "${scnState.name || "scenario"}" — review the experiment results above. Press Run for a fresh experiment, or Reset to edit.`
+      : "Build your scenario below, then press Run to start it.";
+  }
+
   const el = document.getElementById("scn-status");
   if (!el) return;
-  if (scnState.playing) {
-    el.textContent = `▶ ${scnState.name || "playing"} · ${Math.floor(scnState.elapsed)}s${scnState.loop ? " · loop" : ""}`;
+  if (playing) {
+    el.textContent = `▶ ${scnState.name || "running"} · ${Math.floor(scnState.elapsed)}s${scnState.loop ? " · loop" : ""}`;
     el.style.color = getCSS("--premium");
+  } else if (paused) {
+    el.textContent = "paused";
+    el.style.color = getCSS("--accent");
   } else {
     el.textContent = "stopped";
     el.style.color = getCSS("--muted");
@@ -1136,7 +1195,23 @@ function updateScnStatus() {
 async function scnPlay() {
   scnBuilder.name = document.getElementById("scn-name").value;
   scnBuilder.loop = document.getElementById("scn-loop").checked;
+  // Lock the setup immediately rather than waiting for the next poll.
+  scnPaused = false;
+  scnState = { ...scnState, playing: true, name: scnBuilder.name, loop: scnBuilder.loop, elapsed: 0 };
+  expState = { running: true, name: scnBuilder.name, elapsed: 0, has_result: false };
+  updateScnStatus();
+  updateExpStatus();
   try {
+    // Every Run is a fresh experiment: clear prior buffers, then start the
+    // traffic and begin accumulating cumulative metrics from zero together.
+    await fetch("/api/reset", { method: "POST" });
+    for (const k in history) history[k] = [];
+    for (const k in rawHistory) rawHistory[k] = [];
+    sampleCursor = null;
+    await fetch("/api/experiment/start", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: scnBuilder.name }),
+    });
     await fetch("/api/scenario/start", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: scnBuilder.name, period: scnBuilder.period, loop: scnBuilder.loop, curves: scnBuilder.curves }),
@@ -1144,8 +1219,34 @@ async function scnPlay() {
   } catch (e) {}
 }
 
-async function scnStop() {
+// Pause = freeze the run for review: stop the traffic and end the experiment so
+// its final cumulative stats are kept on screen, but DON'T clear the charts or
+// unlock the builder. From here, Run starts fresh or Reset returns to editing.
+async function scnPause() {
+  scnPaused = true;
+  scnState = { ...scnState, playing: false };
+  expState = { ...expState, running: false, has_result: true };
+  updateScnStatus();
+  updateExpStatus();
   try { await fetch("/api/scenario/stop", { method: "POST" }); } catch (e) {}
+  try { await fetch("/api/experiment/stop", { method: "POST" }); } catch (e) {}
+}
+
+// Reset = return to the initial setup state: stop driving traffic, clear the
+// measured-latency charts/counters, and unlock the builder for editing again.
+async function scnReset() {
+  try { await fetch("/api/scenario/stop", { method: "POST" }); } catch (e) {}
+  try { await fetch("/api/experiment/stop", { method: "POST" }); } catch (e) {}
+  try { await fetch("/api/reset", { method: "POST" }); } catch (e) {}
+  for (const k in history) history[k] = [];
+  for (const k in rawHistory) rawHistory[k] = [];
+  sampleCursor = null;
+  scnPaused = false;
+  scnState = { ...scnState, playing: false, elapsed: 0 };
+  expState = { running: false, name: "", elapsed: 0, has_result: false };
+  updateScnStatus();
+  updateExpStatus();
+  draw();
 }
 
 // A tenant's effective cycle length is its own `period` if set, else the
