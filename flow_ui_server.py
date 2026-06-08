@@ -36,7 +36,10 @@ Usage:
 
 import argparse
 import asyncio
+import json
+import math
 import os
+import re
 import time
 from typing import Dict, List, Set
 
@@ -90,6 +93,34 @@ def _percentile(sorted_vals: List[float], q: float):
     return sorted_vals[idx]
 
 
+def _status_buckets(counts: dict):
+    """Collapse a status_counts dict into (200, 429, 503, other) totals."""
+    s_200 = counts.get("200", 0)
+    s_429 = sum(c for k, c in counts.items() if "429" in str(k))
+    s_503 = sum(c for k, c in counts.items() if "503" in str(k))
+    s_err = sum(
+        c for k, c in counts.items()
+        if "200" not in str(k) and "429" not in str(k) and "503" not in str(k)
+    )
+    return s_200, s_429, s_503, s_err
+
+
+def raw_samples(metrics: MetricsCollector, fid: str, since: float, now: float) -> list:
+    """Return [ts, ttft, total] for every completed request after ``since``.
+
+    The browser keeps its own raw buffer and does the windowed aggregation
+    client-side, so changing the avg window can recompute *all* plotted points
+    instead of only future ones. ``ttft_window`` and ``duration_window`` are
+    appended in lockstep (see MetricsCollector.record), so zipping is safe.
+    """
+    floor = (now - MAX_BUFFER_WINDOW) if since is None else since
+    out = []
+    for (ts, ttft), (_ts, dur) in zip(metrics.ttft_window[fid], metrics.duration_window[fid]):
+        if ts > floor:
+            out.append([round(ts, 3), ttft, dur])
+    return out
+
+
 def window_stats(metrics: MetricsCollector, fid: str, window_sec: float, now: float) -> dict:
     """Compute trailing-window latency/throughput stats for one tenant."""
     cutoff = now - window_sec
@@ -104,14 +135,7 @@ def window_stats(metrics: MetricsCollector, fid: str, window_sec: float, now: fl
         span = max(now - comps[0], 0.1)
         qps = len(comps) / span
 
-    counts = metrics.status_counts[fid]
-    s_200 = counts.get("200", 0)
-    s_429 = sum(c for k, c in counts.items() if "429" in str(k))
-    s_503 = sum(c for k, c in counts.items() if "503" in str(k))
-    s_err = sum(
-        c for k, c in counts.items()
-        if "200" not in str(k) and "429" not in str(k) and "503" not in str(k)
-    )
+    s_200, s_429, s_503, s_err = _status_buckets(metrics.status_counts[fid])
 
     return {
         "med_ttft": _percentile(ttfts, 0.5),
@@ -125,6 +149,42 @@ def window_stats(metrics: MetricsCollector, fid: str, window_sec: float, now: fl
         "active": metrics.active_requests[fid],
         # Cumulative since process start (or last reset) -- useful for spotting
         # rejections/evictions as you push past capacity.
+        "s_200": s_200,
+        "s_429": s_429,
+        "s_503": s_503,
+        "s_err": s_err,
+    }
+
+
+def experiment_stats(metrics: MetricsCollector, fid: str, start: float, now: float, counts0: dict) -> dict:
+    """Latency/throughput/status accumulated since an experiment's start.
+
+    Unlike :func:`window_stats` (a trailing moving average), this aggregates
+    *every* sample recorded since ``start`` -- the full distribution for the
+    whole experiment run -- and reports status-code counts as deltas from the
+    ``counts0`` snapshot taken when the experiment began, so they reflect only
+    what happened during the experiment rather than since process start.
+    """
+    ttfts = sorted(v for ts, v in metrics.ttft_window[fid] if ts >= start)
+    durs = sorted(v for ts, v in metrics.duration_window[fid] if ts >= start)
+    comps = [ts for ts in metrics.completion_times[fid] if ts >= start]
+
+    elapsed = max(now - start, 0.1)
+    qps = len(comps) / elapsed if comps else 0.0
+
+    cur = _status_buckets(metrics.status_counts[fid])
+    base = _status_buckets(counts0 or {})
+    s_200, s_429, s_503, s_err = (max(0, c - b) for c, b in zip(cur, base))
+
+    return {
+        "med_ttft": _percentile(ttfts, 0.5),
+        "p95_ttft": _percentile(ttfts, 0.95),
+        "max_ttft": _percentile(ttfts, 1.0),
+        "med_total": _percentile(durs, 0.5),
+        "p95_total": _percentile(durs, 0.95),
+        "max_total": _percentile(durs, 1.0),
+        "qps": qps,
+        "samples": len(ttfts),
         "s_200": s_200,
         "s_429": s_429,
         "s_503": s_503,
@@ -191,11 +251,186 @@ async def run_interactive_worker(
             pass
 
 
-async def prune_loop(metrics: MetricsCollector, tenants: List[Tenant], max_window: float, stop_event: asyncio.Event) -> None:
+# ==============================================================================
+# 3b. SCENARIO PLAYER
+# ==============================================================================
+# A "scenario" drives per-tenant *traffic rate* (QPS) along a curve that repeats
+# every `period` seconds, so you can replay canonical multi-tenant shapes
+# (phase-offset sines, sudden spikes, day/night batch) hands-free.
+#
+# The player does not touch the load-generation path at all: it simply writes
+# into the same ``control["rates"]`` dict the QPS sliders write to, and flips the
+# server into "qps" mode. The existing per-tenant workers then issue traffic at
+# whatever rate the curve currently dictates. Stopping a scenario zeroes the
+# rates and hands control back to the sliders.
+#
+# Each curve is a small JSON blob ``{"type": ..., "base": ..., "amplitude": ...}``
+# evaluated at a normalized phase ``p`` in [0, 1) (the fraction through the
+# period). ``eval_curve`` is mirrored verbatim in the browser so the on-screen
+# preview matches exactly what the server plays.
+
+
+# --- Deterministic PRNG ------------------------------------------------------
+# Random-looking but fully reproducible: spike positions and jitter are derived
+# from a per-curve integer ``seed`` via this hash, so (a) the browser preview
+# matches server playback bit-for-bit, and (b) a saved scenario replays the
+# exact same "random" arrangement every time. ``_hash01`` is mirrored verbatim
+# in flow_ui.html as ``hash01``; keep the two in lockstep.
+#
+# All arithmetic is unsigned 32-bit. ``& 0xFFFFFFFF`` here reduces mod 2**32
+# exactly as ``Math.imul(a, b) >>> 0`` does in JS, so the two implementations
+# produce identical sequences.
+JITTER_BUCKETS = 120  # noise is piecewise-constant over this many slots / period
+
+
+def _imul(a: int, b: int) -> int:
+    return ((a & 0xFFFFFFFF) * (b & 0xFFFFFFFF)) & 0xFFFFFFFF
+
+
+def _hash01(seed: int, n: int) -> float:
+    """Hash (seed, n) -> a deterministic float in [0, 1)."""
+    x = (_imul(seed, 0x9E3779B1) + _imul(n, 0x85EBCA77)) & 0xFFFFFFFF
+    x ^= x >> 16
+    x = _imul(x, 0x7FEB352D)
+    x ^= x >> 15
+    x = _imul(x, 0x846CA68B)
+    x ^= x >> 16
+    return (x & 0xFFFFFFFF) / 4294967296.0
+
+
+def eval_curve(curve: dict, p: float, max_val: float) -> float:
+    """Evaluate one traffic curve at normalized phase ``p`` in [0, 1).
+
+    A curve has a *base shape* (set by ``type``) and two optional *modifiers*
+    that stack on top of any shape: ``spikes`` (superimposed random pulses) and
+    ``jitter`` (a noise band). Returns a QPS value clamped to [0, max_val].
+    Unknown fields are ignored and sensible defaults are applied so
+    partially-specified curves still work.
+    """
+    ctype = curve.get("type", "constant")
+    base = float(curve.get("base", 0.0) or 0.0)
+    amp = float(curve.get("amplitude", 0.0) or 0.0)
+    phase = float(curve.get("phase", 0.0) or 0.0)
+    ph = (p + phase) % 1.0
+
+    if ctype == "sine":
+        v = base + amp * math.sin(2 * math.pi * ph)
+    elif ctype == "ramp":
+        # Linear trend from ``base`` up to ``base + amp`` across the period.
+        v = base + amp * ph
+    elif ctype == "triangle":
+        # Rise to the peak at mid-period, then fall symmetrically back.
+        v = base + amp * (1.0 - abs(2.0 * ph - 1.0))
+    elif ctype == "square":
+        # On/off, phase-shiftable: high for the first ``duty`` of the period.
+        duty = float(curve.get("duty", 0.5) or 0.0)
+        v = base + amp if ph < duty else base
+    elif ctype == "spike":
+        pos = float(curve.get("pos", 0.5) or 0.0)
+        width = float(curve.get("width", 0.08) or 0.0)
+        # Distance to the spike center, measured the short way around the loop so
+        # a spike near the period boundary still reads as a single pulse.
+        d = abs(ph - pos)
+        d = min(d, 1.0 - d)
+        v = base + amp if d < width / 2.0 else base
+    elif ctype == "day":
+        # High for the first `duty` fraction of the period, low after.
+        duty = float(curve.get("duty", 0.5) or 0.0)
+        v = base + amp if ph < duty else base
+    elif ctype == "night":
+        # Mirror of "day": low first, high for the trailing `duty` fraction.
+        duty = float(curve.get("duty", 0.5) or 0.0)
+        v = base + amp if ph >= (1.0 - duty) else base
+    else:  # "constant" and any unknown type
+        v = base
+
+    # --- Modifier: superimposed random spikes --------------------------------
+    # ``spikes`` pulses per period at deterministic-random positions, each of
+    # height ``spike_amp`` and fractional ``spike_width``. Lets a steady or
+    # smooth flow read as a bursty "noisy neighbor".
+    nspk = int(curve.get("spikes", 0) or 0)
+    if nspk > 0:
+        seed = int(curve.get("seed", 1) or 0)
+        spk_amp = float(curve.get("spike_amp", amp or base) or 0.0)
+        spk_w = float(curve.get("spike_width", 0.04) or 0.0)
+        for k in range(nspk):
+            pos = _hash01(seed, k)
+            d = abs(ph - pos)
+            d = min(d, 1.0 - d)
+            if d < spk_w / 2.0:
+                v += spk_amp
+
+    # --- Modifier: jitter / noise band ---------------------------------------
+    # Multiplies the value by a piecewise-constant noise factor in
+    # [1-jit, 1+jit]. Piecewise-constant (per bucket) so it reads as realistic
+    # second-to-second variation rather than per-tick flicker.
+    jit = float(curve.get("jitter", 0.0) or 0.0)
+    if jit > 0:
+        seed = int(curve.get("seed", 1) or 0)
+        bucket = int(ph * JITTER_BUCKETS)
+        r = _hash01(seed ^ 0x5BD1E995, bucket)
+        v *= 1.0 + jit * (r - 0.5) * 2.0
+
+    return max(0.0, min(v, max_val))
+
+
+async def run_scenario_driver(control: dict, max_qps: float, stop_event: asyncio.Event) -> None:
+    """Continuously project the active scenario's curves onto ``control["rates"]``.
+
+    Idle (writes nothing) unless a scenario is playing, so the QPS sliders keep
+    working between scenarios. A non-looping scenario zeroes traffic and stops
+    once it has run for a full period.
+    """
+    rates: Dict[str, float] = control["rates"]
+    while not stop_event.is_set():
+        scn = control["scenario"]
+        if scn["playing"]:
+            elapsed = time.monotonic() - scn["start"]
+            period = max(1.0, float(scn["period"]))
+            curves = scn["curves"]
+
+            # Each tenant cycles on its own period (curve["period"]), falling back
+            # to the scenario default. The playhead/non-loop window spans the
+            # longest period so a faster tenant repeats inside it. Mirrored in the
+            # browser's effPeriod()/windowPeriod().
+            def eff_period(curve: dict) -> float:
+                cp = float(curve.get("period") or 0.0)
+                return min(max(1.0, cp if cp > 0 else period), 3600.0)
+
+            window = period
+            for curve in curves.values():
+                window = max(window, eff_period(curve))
+
+            if not scn["loop"] and elapsed >= window:
+                for fid in rates:
+                    rates[fid] = 0.0
+                scn["playing"] = False
+                scn["elapsed"] = window
+                scn["phase"] = 1.0
+            else:
+                scn["elapsed"] = elapsed
+                scn["phase"] = (elapsed % window) / window if scn["loop"] else min(elapsed / window, 1.0)
+                for fid, curve in curves.items():
+                    if fid in rates:
+                        eff = eff_period(curve)
+                        p = (elapsed % eff) / eff if scn["loop"] else min(elapsed / eff, 1.0)
+                        rates[fid] = eval_curve(curve, p, max_qps)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=TICK_SEC)
+            break
+        except asyncio.TimeoutError:
+            pass
+
+
+async def prune_loop(metrics: MetricsCollector, tenants: List[Tenant], max_window: float, control: dict, stop_event: asyncio.Event) -> None:
     """Trim timestamped sample buffers so a long-running session stays bounded.
 
     Status counts are left cumulative on purpose (the UI shows them as running
     totals); only the per-sample latency/throughput buffers are trimmed.
+
+    While an experiment is running we retain everything back to its start (even
+    past ``max_window``) so the cumulative experiment stats cover the whole run,
+    not just the trailing moving-average window.
     """
     while not stop_event.is_set():
         try:
@@ -204,6 +439,9 @@ async def prune_loop(metrics: MetricsCollector, tenants: List[Tenant], max_windo
         except asyncio.TimeoutError:
             pass
         cutoff = time.monotonic() - max_window
+        exp = control["experiment"]
+        if exp["running"]:
+            cutoff = min(cutoff, exp["start"])
         for t in tenants:
             fid = t.fairness_id
             metrics.ttft_window[fid] = [(ts, v) for ts, v in metrics.ttft_window[fid] if ts >= cutoff]
@@ -259,27 +497,44 @@ async def handle_stats(request: web.Request) -> web.Response:
         win = 10.0
     win = max(1.0, min(win, MAX_BUFFER_WINDOW))
 
+    # Cursor for incremental raw-sample streaming. Absent on first poll, which
+    # backfills the whole retained buffer so a window change can recompute history.
+    try:
+        since = float(request.query["since"])
+    except (KeyError, ValueError):
+        since = None
+
     now = time.monotonic()
+    exp = control["experiment"]
     per_tenant = []
     total_target = 0
     total_target_qps = 0.0
     total_active = 0
     total_qps = 0.0
     for t in tenants:
-        s = window_stats(metrics, t.fairness_id, win, now)
-        tgt = int(targets.get(t.fairness_id, 0))
-        tgt_qps = float(rates.get(t.fairness_id, 0.0))
+        fid = t.fairness_id
+        s = window_stats(metrics, fid, win, now)
+        tgt = int(targets.get(fid, 0))
+        tgt_qps = float(rates.get(fid, 0.0))
         total_target += tgt
         total_target_qps += tgt_qps
         total_active += s["active"]
         total_qps += s["qps"]
+        # Cumulative stats for the active experiment, or the frozen final stats
+        # captured when the last experiment ended; None if none has run.
+        if exp["running"]:
+            exp_stats = experiment_stats(metrics, fid, exp["start"], now, exp["counts0"].get(fid, {}))
+        else:
+            exp_stats = exp["results"].get(fid)
         per_tenant.append({
-            "fairness_id": t.fairness_id,
+            "fairness_id": fid,
             "objective": t.inference_objective,
             "priority": t.priority,
             "target": tgt,
             "target_qps": tgt_qps,
             **s,
+            "exp": exp_stats,
+            "samples": raw_samples(metrics, fid, since, now),
         })
 
     capacity = app["args"].capacity
@@ -287,6 +542,7 @@ async def handle_stats(request: web.Request) -> web.Response:
     # target itself can exceed deployment capacity. In open-loop QPS mode the
     # backpressure shows up as in-flight requests piling past capacity.
     saturated = (total_active > capacity) if mode == "qps" else (total_target > capacity)
+    scn = control["scenario"]
     return web.json_response({
         "now": now,
         "ts_ms": int(time.time() * 1000),
@@ -298,6 +554,26 @@ async def handle_stats(request: web.Request) -> web.Response:
         "total_active": total_active,
         "total_qps": total_qps,
         "saturated": saturated,
+        "scenario": {
+            "playing": scn["playing"],
+            "name": scn["name"],
+            "period": scn["period"],
+            "loop": scn["loop"],
+            "elapsed": scn["elapsed"],
+            "phase": scn["phase"],
+        },
+        # An "experiment" is an independent measurement session: it marks a start
+        # time and accumulates every metric since then, alongside (not instead of)
+        # the trailing moving-average window. It is decoupled from scenario
+        # playback -- you can play/stop any number of scenarios within one
+        # experiment and the cumulative numbers keep accruing.
+        "experiment": {
+            "running": exp["running"],
+            "name": exp["name"],
+            "started_ms": exp["started_ms"],
+            "elapsed": (now - exp["start"]) if exp["running"] else exp["result_elapsed"],
+            "has_result": bool(exp["results"]),
+        },
         "tenants": per_tenant,
     })
 
@@ -359,11 +635,256 @@ async def handle_set_mode(request: web.Request) -> web.Response:
     return web.json_response({"mode": mode})
 
 
+async def handle_scenario_start(request: web.Request) -> web.Response:
+    """Begin playing a scenario: per-tenant QPS curves over a repeating period.
+
+    Body: {"name": str, "period": float, "loop": bool,
+           "curves": {fairness_id: {"type": ..., "base": ..., ...}}}
+
+    Switches the server into QPS mode; the scenario driver then takes over the
+    per-tenant rates until /api/scenario/stop (or, for non-looping runs, the
+    period elapses).
+    """
+    app = request.app
+    control: dict = app["control"]
+    rates: Dict[str, float] = control["rates"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    curves_in = body.get("curves") or {}
+    if not isinstance(curves_in, dict):
+        return web.json_response({"error": "curves must be an object"}, status=400)
+    curves = {fid: c for fid, c in curves_in.items() if fid in rates and isinstance(c, dict)}
+    if not curves:
+        return web.json_response({"error": "no curves for known tenants"}, status=400)
+
+    try:
+        period = float(body.get("period", 60.0))
+    except (TypeError, ValueError):
+        period = 60.0
+    period = max(1.0, min(period, 3600.0))
+    loop = bool(body.get("loop", True))
+    name = str(body.get("name", ""))[:120]
+
+    control["mode"] = "qps"
+    control["scenario"].update(
+        playing=True,
+        name=name,
+        period=period,
+        loop=loop,
+        start=time.monotonic(),
+        elapsed=0.0,
+        phase=0.0,
+        curves=curves,
+    )
+    return web.json_response({"ok": True, "name": name, "period": period, "loop": loop})
+
+
+async def handle_scenario_stop(request: web.Request) -> web.Response:
+    """Stop the active scenario and zero out all tenant traffic rates."""
+    app = request.app
+    control: dict = app["control"]
+    control["scenario"]["playing"] = False
+    for fid in control["rates"]:
+        control["rates"][fid] = 0.0
+    return web.json_response({"ok": True})
+
+
+async def handle_experiment_start(request: web.Request) -> web.Response:
+    """Begin an experiment: mark a start time and accumulate all metrics from it.
+
+    Body: {"name": str}. Independent of scenario playback and of the
+    play/stop controls -- it only snapshots the current status counters (so
+    later counts can be reported as deltas) and records the start time. The
+    stats endpoint then reports cumulative-since-start figures per tenant.
+    """
+    app = request.app
+    metrics: MetricsCollector = app["metrics"]
+    control: dict = app["control"]
+    rates: Dict[str, float] = control["rates"]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = str(body.get("name", "") or "")[:120]
+
+    control["experiment"].update(
+        running=True,
+        name=name,
+        start=time.monotonic(),
+        started_ms=int(time.time() * 1000),
+        # Snapshot per-tenant status counts so the experiment reports deltas.
+        counts0={fid: dict(metrics.status_counts[fid]) for fid in rates},
+        results={},
+        result_elapsed=0.0,
+    )
+    return web.json_response({"ok": True, "name": name})
+
+
+async def handle_experiment_stop(request: web.Request) -> web.Response:
+    """End the active experiment, freezing its final cumulative stats.
+
+    The per-tenant totals are computed once here and stored so the UI keeps
+    showing the final experiment result after it stops (the trailing sample
+    buffers get pruned shortly after, so we can't recompute it later).
+    """
+    app = request.app
+    metrics: MetricsCollector = app["metrics"]
+    control: dict = app["control"]
+    exp = control["experiment"]
+    if exp["running"]:
+        now = time.monotonic()
+        exp["results"] = {
+            fid: experiment_stats(metrics, fid, exp["start"], now, exp["counts0"].get(fid, {}))
+            for fid in control["rates"]
+        }
+        exp["result_elapsed"] = now - exp["start"]
+        exp["running"] = False
+    return web.json_response({"ok": True})
+
+
 async def handle_reset(request: web.Request) -> web.Response:
     """Clear cumulative counters and latency buffers without touching targets."""
     app = request.app
     metrics: MetricsCollector = app["metrics"]
     metrics.reset()
+    # A reset wipes the buffers the experiment accumulates from, so any frozen
+    # experiment result is no longer meaningful -- clear it too.
+    exp = app["control"]["experiment"]
+    exp["running"] = False
+    exp["results"] = {}
+    exp["result_elapsed"] = 0.0
+    return web.json_response({"ok": True})
+
+
+# ==============================================================================
+# 4b. SAVED SCENARIOS (on-disk JSON "trace" files)
+# ==============================================================================
+# Scenarios are persisted one-per-file under ``scenarios/`` next to this script
+# so they can be version-controlled, shared, and replayed exactly. Each file is
+# the same JSON shape the scenario player and builder use:
+#   {"name": str, "period": float, "loop": bool,
+#    "curves": {fairness_id: {"type": ..., "base": ..., ...}}}
+# QPS values are stored absolute (not as fractions of --max-qps) so a saved
+# scenario plays back identically regardless of the server's slider bounds.
+
+SCN_DIR = os.path.join(HERE, "scenarios")
+
+
+def _slug(name: str) -> str:
+    """Filesystem-safe slug for a scenario name (also the file stem)."""
+    s = re.sub(r"[^a-z0-9]+", "-", str(name).strip().lower()).strip("-")
+    return (s or "scenario")[:64]
+
+
+def _scn_path(slug: str) -> str:
+    """Resolve a slug to a path inside SCN_DIR, refusing traversal."""
+    safe = _slug(slug)
+    path = os.path.abspath(os.path.join(SCN_DIR, safe + ".json"))
+    if os.path.dirname(path) != os.path.abspath(SCN_DIR):
+        raise ValueError("invalid scenario name")
+    return path
+
+
+def _load_scn_files() -> List[dict]:
+    """Read every saved scenario, newest first. Skips unreadable/invalid files."""
+    out: List[dict] = []
+    try:
+        names = os.listdir(SCN_DIR)
+    except FileNotFoundError:
+        return out
+    for fn in names:
+        if not fn.endswith(".json"):
+            continue
+        path = os.path.join(SCN_DIR, fn)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or not isinstance(data.get("curves"), dict):
+                continue
+            data["slug"] = fn[:-5]
+            try:
+                data["mtime"] = os.path.getmtime(path)
+            except OSError:
+                data["mtime"] = 0.0
+            out.append(data)
+        except (OSError, ValueError):
+            continue
+    out.sort(key=lambda d: d.get("mtime", 0.0), reverse=True)
+    return out
+
+
+async def handle_scenarios_list(request: web.Request) -> web.Response:
+    """List saved scenarios (full definitions, so the UI can load without a 2nd call)."""
+    return web.json_response({"scenarios": _load_scn_files()})
+
+
+async def handle_scenarios_save(request: web.Request) -> web.Response:
+    """Persist a scenario to ``scenarios/<slug>.json``.
+
+    Body matches the player/builder shape: {name, period, loop, curves}. The
+    name's slug is the filename, so saving under an existing name overwrites it.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    name = str(body.get("name", "")).strip()
+    if not name:
+        return web.json_response({"error": "name is required"}, status=400)
+    curves = body.get("curves")
+    if not isinstance(curves, dict) or not curves:
+        return web.json_response({"error": "curves must be a non-empty object"}, status=400)
+
+    try:
+        period = float(body.get("period", 60.0))
+    except (TypeError, ValueError):
+        period = 60.0
+    period = max(1.0, min(period, 3600.0))
+
+    try:
+        window = float(body.get("window", period))
+    except (TypeError, ValueError):
+        window = period
+    window = max(10.0, min(window, 300.0))
+
+    record = {
+        "name": name,
+        "period": period,
+        "window": window,
+        "loop": bool(body.get("loop", True)),
+        "curves": curves,
+    }
+    try:
+        os.makedirs(SCN_DIR, exist_ok=True)
+        path = _scn_path(name)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2)
+    except (OSError, ValueError) as e:
+        return web.json_response({"error": f"could not save: {e}"}, status=400)
+
+    return web.json_response({"ok": True, "slug": _slug(name), "name": name})
+
+
+async def handle_scenarios_delete(request: web.Request) -> web.Response:
+    """Delete a saved scenario by slug."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    slug = body.get("slug") or body.get("name")
+    if not slug:
+        return web.json_response({"error": "slug is required"}, status=400)
+    try:
+        path = _scn_path(slug)
+        os.remove(path)
+    except FileNotFoundError:
+        return web.json_response({"error": "not found"}, status=404)
+    except (OSError, ValueError) as e:
+        return web.json_response({"error": str(e)}, status=400)
     return web.json_response({"ok": True})
 
 
@@ -382,6 +903,30 @@ async def on_startup(app: web.Application) -> None:
         "mode": "concurrency",
         "targets": {t.fairness_id: 0 for t in tenants},
         "rates": {t.fairness_id: 0.0 for t in tenants},
+        # Active scenario state (see run_scenario_driver). `curves` maps
+        # fairness_id -> curve dict; empty/`playing: False` means idle.
+        "scenario": {
+            "playing": False,
+            "name": "",
+            "period": 60.0,
+            "loop": True,
+            "start": 0.0,
+            "elapsed": 0.0,
+            "phase": 0.0,
+            "curves": {},
+        },
+        # Active/last experiment (see handle_experiment_*). `counts0` snapshots
+        # per-tenant status counts at start so they can be reported as deltas;
+        # `results` holds the frozen final stats once stopped.
+        "experiment": {
+            "running": False,
+            "name": "",
+            "start": 0.0,
+            "started_ms": 0,
+            "counts0": {},
+            "results": {},
+            "result_elapsed": 0.0,
+        },
     }
 
     connector = aiohttp.TCPConnector(limit=0)
@@ -406,7 +951,10 @@ async def on_startup(app: web.Application) -> None:
         asyncio.create_task(run_interactive_worker(generator, t, control, stop_event))
         for t in tenants
     ]
-    pruner = asyncio.create_task(prune_loop(metrics, tenants, MAX_BUFFER_WINDOW, stop_event))
+    pruner = asyncio.create_task(prune_loop(metrics, tenants, MAX_BUFFER_WINDOW, control, stop_event))
+    scenario_driver = asyncio.create_task(
+        run_scenario_driver(control, float(args.max_qps), stop_event)
+    )
 
     app["metrics"] = metrics
     app["tenants"] = tenants
@@ -416,6 +964,7 @@ async def on_startup(app: web.Application) -> None:
     app["stop_event"] = stop_event
     app["workers"] = workers
     app["pruner"] = pruner
+    app["scenario_driver"] = scenario_driver
 
 
 async def on_cleanup(app: web.Application) -> None:
@@ -427,10 +976,12 @@ async def on_cleanup(app: web.Application) -> None:
     for w in app["workers"]:
         w.cancel()
     app["pruner"].cancel()
+    app["scenario_driver"].cancel()
     for task in list(generator.inflight):
         task.cancel()
     await asyncio.gather(
-        *app["workers"], app["pruner"], *generator.inflight, return_exceptions=True
+        *app["workers"], app["pruner"], app["scenario_driver"], *generator.inflight,
+        return_exceptions=True,
     )
     await session.close()
 
@@ -461,6 +1012,13 @@ def main() -> None:
     app.router.add_post("/api/concurrency", handle_set_concurrency)
     app.router.add_post("/api/qps", handle_set_qps)
     app.router.add_post("/api/mode", handle_set_mode)
+    app.router.add_post("/api/scenario/start", handle_scenario_start)
+    app.router.add_post("/api/scenario/stop", handle_scenario_stop)
+    app.router.add_post("/api/experiment/start", handle_experiment_start)
+    app.router.add_post("/api/experiment/stop", handle_experiment_stop)
+    app.router.add_get("/api/scenarios", handle_scenarios_list)
+    app.router.add_post("/api/scenarios/save", handle_scenarios_save)
+    app.router.add_post("/api/scenarios/delete", handle_scenarios_delete)
     app.router.add_post("/api/reset", handle_reset)
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)

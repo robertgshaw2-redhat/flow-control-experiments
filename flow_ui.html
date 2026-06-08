@@ -96,17 +96,105 @@
   .codes .ok { color: var(--premium); } .codes .warn { color: var(--standard); } .codes .bad { color: var(--red); }
   .good { color: var(--premium); } .mid { color: var(--standard); } .hot { color: var(--red); }
   .disconnected { color: var(--red); }
+
+  /* Top-level view tabs */
+  .nav { display: inline-flex; gap: 6px; margin-bottom: 16px; }
+  .nav button { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 16px; font-weight: 600; color: var(--muted); }
+  .nav button.active { background: var(--accent); color: #04121f; border-color: var(--accent); }
+  [hidden] { display: none !important; }
+
+  /* Scenario builder */
+  .presets { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 8px; }
+  .preset { text-align: left; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; color: var(--txt); font: inherit; }
+  .preset:hover { border-color: var(--accent); }
+  .preset.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .preset .pname { font-weight: 600; margin-bottom: 3px; }
+  .preset .pdesc { color: var(--muted); font-size: 11px; }
+  .scn-tenant { margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .scn-tenant:last-child { border-bottom: none; }
+  .scn-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 7px 0; }
+  .scn-row label { color: var(--muted); font-size: 12px; }
+  .scn-row input[type=number], .scn-row input[type=text] {
+    width: 96px; background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 7px; font: inherit; font-variant-numeric: tabular-nums;
+  }
+  .scn-row input[type=text] { width: auto; flex: 1; }
+  .scn-row select { width: 150px; }
+  .play-row { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
+  .play-row button.primary { background: var(--premium); color: #04121f; font-weight: 700; border-color: var(--premium); }
+  .play-row button.primary:hover { filter: brightness(1.05); border-color: var(--premium); }
+  .scn-status { color: var(--muted); font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
+  button:disabled, input:disabled, select:disabled { opacity: .45; cursor: not-allowed; }
+  button:disabled:hover { border-color: var(--line); }
+
+  /* Setup vs Running mode banner for the scenario builder */
+  .mode-banner {
+    display: flex; align-items: center; gap: 11px;
+    padding: 10px 13px; border-radius: 10px; margin-bottom: 16px;
+    border: 1px solid var(--line); background: var(--panel2);
+  }
+  .mode-banner .badge {
+    font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 6px; flex-shrink: 0;
+  }
+  .mode-banner .mtext { font-size: 12px; color: var(--muted); line-height: 1.35; }
+  .mode-banner.setup { border-color: rgba(251,189,35,.45); background: rgba(251,189,35,.08); }
+  .mode-banner.setup .badge { background: var(--standard); color: #04121f; }
+  .mode-banner.running { border-color: rgba(54,211,153,.5); background: rgba(54,211,153,.10); }
+  .mode-banner.running .badge { background: var(--premium); color: #04121f; }
+  .mode-banner.paused { border-color: rgba(96,165,250,.5); background: rgba(96,165,250,.10); }
+  .mode-banner.paused .badge { background: var(--accent); color: #04121f; }
+
+  /* While a scenario runs, the whole setup is locked (read-only) */
+  #scn-builder-panel.locked #presets,
+  #scn-builder-panel.locked #saved,
+  #scn-builder-panel.locked #scn-editors,
+  #scn-builder-panel.locked .scn-row { opacity: .5; pointer-events: none; }
+
+  /* Experiment bar — shows experiment status and hosts the Run / Reset controls */
+  .exp-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 16px; margin-bottom: 16px;
+  }
+  .exp-bar.running { border-color: rgba(96,165,250,.55); background: rgba(96,165,250,.08); }
+  .exp-bar .exp-state { font-weight: 700; }
+  .exp-bar.running .exp-state { color: var(--accent); }
+  .exp-bar .exp-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .exp-actions { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
+  .exp-actions input[type=text] {
+    background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 9px; font: inherit; width: 170px;
+  }
+  .exp-actions button.primary { background: var(--accent); color: #04121f; font-weight: 700; border-color: var(--accent); }
+  .exp-actions button.primary:hover { filter: brightness(1.05); border-color: var(--accent); }
+
+  /* Two-column stat cards in the scenarios view: moving avg vs. experiment */
+  #scn-cards { grid-template-columns: 1fr; }
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 620px) { .twocol { grid-template-columns: 1fr; } }
+  .subcard { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+  .subcard.muted-col { opacity: .55; }
+  .col-h { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 9px; font-weight: 700; }
+  .col-h .accent { color: var(--accent); }
+  .no-exp { color: var(--muted); font-size: 12px; padding: 10px 0; }
 </style>
 </head>
 <body>
   <h1 id="page-title">EPP Flow Control — Live</h1>
   <div class="sub">Target <code id="target-url">…</code> · model <code id="model-name">…</code>. <span id="sub-hint">Drag the sliders to change how many requests each flow holds in flight, and watch latency move.</span></div>
 
+  <div class="nav">
+    <button data-view="live" class="active">Live control</button>
+    <button data-view="scenarios">Scenarios</button>
+  </div>
+
   <div id="banner" class="banner healthy">
     <span id="banner-state">HEALTHY</span>
     <span class="cap" id="banner-cap"></span>
   </div>
 
+  <div id="view-live">
   <div class="grid">
     <!-- LEFT: controls -->
     <div class="panel">
@@ -169,6 +257,83 @@
       <div class="cards" id="cards"></div>
     </div>
   </div>
+  </div><!-- /view-live -->
+
+  <div id="view-scenarios" hidden>
+    <div class="exp-bar" id="exp-bar">
+      <div>
+        <div class="exp-state" id="exp-state">No experiment running</div>
+        <div class="exp-sub" id="exp-sub">Start an experiment to accumulate every metric across the whole run, alongside the moving averages. Independent of Play / Stop, which only drive the traffic curves.</div>
+      </div>
+      <div class="exp-actions">
+        <button id="scn-play" class="primary" title="Start a fresh experiment: lock the setup and drive these traffic curves while accumulating cumulative metrics from zero.">▶ Run</button>
+        <button id="scn-pause" title="Pause the run: stop the traffic and freeze the experiment's final results for review, keeping the charts on screen. Press Reset to edit again, or Run for a fresh experiment.">⏸ Pause</button>
+        <button id="scn-reset" title="Stop the run, clear the charts, and return to an editable setup.">↺ Reset</button>
+      </div>
+    </div>
+    <div class="grid">
+      <!-- LEFT: scenario builder -->
+      <div class="panel builder-lock" id="scn-builder-panel">
+        <div class="mode-banner setup" id="scn-mode-banner">
+          <span class="badge" id="scn-mode-badge">Setup</span>
+          <span class="mtext" id="scn-mode-text">Build your scenario below, then press Run to start it.</span>
+        </div>
+        <h2>Preset scenarios</h2>
+        <div class="presets" id="presets"></div>
+        <h2 style="margin-top:18px;">Saved scenarios <span id="saved-empty" style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;">— none yet; build one and press Save</span></h2>
+        <div class="presets" id="saved"></div>
+        <h2 style="margin-top:18px;">Builder</h2>
+        <div class="scn-row"><label>Name</label><input type="text" id="scn-name" placeholder="My scenario" /></div>
+        <div class="scn-row"><label title="Time span shown in the charts on the right. The traffic plan and the measured latency share this window, so you can line them up in time. Each tenant's own cycle length is set per-tenant below.">Window (s)</label><input type="number" id="scn-window" min="10" max="300" step="5" value="60" /></div>
+        <div class="scn-row"><label title="Repeat the curve forever (uncheck to play it once and stop).">Loop continuously</label><input type="checkbox" id="scn-loop" checked /></div>
+        <div id="scn-editors"></div>
+        <div class="play-row">
+          <button id="scn-save" title="Save the current setup to a file you can re-load and share">💾 Save</button>
+          <span class="scn-status" id="scn-status">stopped</span>
+        </div>
+      </div>
+
+      <!-- RIGHT: traffic plan preview + measured latency -->
+      <div class="panel">
+        <h2>Traffic plan — queries / sec</h2>
+        <div class="chart-wrap"><canvas id="preview" height="200"></canvas></div>
+        <div class="legend">
+          <span><i style="background:var(--premium)"></i>premium-tenant</span>
+          <span><i style="background:var(--standard)"></i>standard-tenant</span>
+          <span style="margin-left:auto;color:var(--muted)">target q/s · now at right</span>
+        </div>
+
+        <h2 style="margin-top:20px;">Measured latency</h2>
+        <div class="controls">
+          <div class="seg" id="scn-metric-seg">
+            <button data-metric="p95_ttft" class="active">P95 TTFT</button>
+            <button data-metric="med_ttft">Median TTFT</button>
+            <button data-metric="max_ttft">Max TTFT</button>
+            <button data-metric="p95_total">P95 Total</button>
+            <button data-metric="med_total">Median Total</button>
+            <button data-metric="max_total">Max latency</button>
+          </div>
+          <label title="Trailing window each plotted point is computed over. Each point aggregates (e.g. P95/median/max) every request that finished in the preceding N seconds. Smaller = more responsive but noisier; larger = smoother but slower to react.">Avg window
+            <select id="scn-window-sel">
+              <option value="3">3s</option>
+              <option value="5">5s</option>
+              <option value="10" selected>10s</option>
+              <option value="20">20s</option>
+            </select>
+          </label>
+          <span style="margin-left:auto;color:var(--muted);font-size:11px;">x-axis span set by the <b>Window</b> field at left</span>
+        </div>
+        <div class="chart-wrap"><canvas id="scn-latency" height="240"></canvas></div>
+        <div class="legend">
+          <span><i style="background:var(--premium)"></i>premium-tenant</span>
+          <span><i style="background:var(--standard)"></i>standard-tenant</span>
+          <span id="scn-y-label" style="margin-left:auto;color:var(--muted)"></span>
+        </div>
+
+        <div class="cards" id="scn-cards"></div>
+      </div>
+    </div>
+  </div><!-- /view-scenarios -->
 
 <script>
 "use strict";
@@ -203,8 +368,136 @@ const MODES = {
 };
 // Per-tenant rolling history of { t (ms), value } for the selected metric is
 // kept separately per metric key so switching metrics keeps prior data.
-const history = {};      // fid -> [ {t, p95_ttft, med_ttft, max_ttft, p95_total, med_total, max_total} ]
+const history = {};      // fid -> [ {t, p95_ttft, med_ttft, max_ttft, p95_total, med_total, max_total, target_qps, qps} ]
+// Raw per-request samples streamed from the server, fid -> [ {t (ms), ttft, total} ].
+// The plotted latency points are aggregated from this client-side, so changing
+// the avg window recomputes every existing point instead of only future ones.
+const rawHistory = {};
+let sampleCursor = null;  // server monotonic seconds; highest sample ts ingested
 let lastOk = 0;
+
+// ----- Scenarios view state -----
+let activeView = "live";                       // "live" | "scenarios"
+let scnWindow = 60;                            // seconds shown in the scenarios dashboard (both charts)
+let scnState = { playing: false, phase: 0, elapsed: 0, period: 60, loop: true, name: "" };
+// Client-only "paused" flag: a run was paused for review. The traffic/experiment
+// are stopped server-side (so scnState.playing is false), but we keep the setup
+// locked and the frozen results on screen until Run (fresh) or Reset (edit).
+let scnPaused = false;
+// Experiment = a measurement session tied to each Run. Mirrors the server's
+// experiment block; started/frozen together with the scenario traffic.
+let expState = { running: false, name: "", elapsed: 0, has_result: false };
+let scnBuilder = null;                          // { name, period, loop, curves: {fid: curve} }
+let PRESETS = [];
+let activePreset = -1;
+let SAVED = [];                                // saved scenarios from disk
+
+// Curve types offered in the builder; `fieldsFor` drives which shape inputs are
+// shown. The `spikes`/`jitter` modifier inputs are shown for every type.
+const CURVE_TYPES = [
+  { v: "sine",     label: "Sine" },
+  { v: "constant", label: "Constant" },
+  { v: "ramp",     label: "Ramp (linear trend)" },
+  { v: "triangle", label: "Triangle" },
+  { v: "square",   label: "Square (on/off)" },
+  { v: "spike",    label: "Spike (single pulse)" },
+  { v: "day",      label: "Day (high first half)" },
+  { v: "night",    label: "Night (high second half)" },
+];
+// Modifier fields are appended to every curve editor (they stack on any shape).
+const MODIFIER_FIELDS = ["spikes", "spike_amp", "spike_width", "jitter", "seed"];
+function fieldsFor(type) {
+  switch (type) {
+    case "constant": return ["base"];
+    case "sine":
+    case "triangle": return ["base", "amplitude", "phase"];
+    case "ramp":     return ["base", "amplitude"];
+    case "square":
+    case "day":
+    case "night":    return ["base", "amplitude", "duty"];
+    case "spike":    return ["base", "amplitude", "pos", "width"];
+    default:         return ["base", "amplitude"];
+  }
+}
+
+// Deterministic PRNG — mirror of _hash01() in flow_ui_server.py. Math.imul(a,b)
+// >>> 0 reduces mod 2**32 exactly like Python's `& 0xFFFFFFFF`, so the spike
+// positions and jitter computed here match server playback bit-for-bit.
+const JITTER_BUCKETS = 120;
+function imul(a, b) { return Math.imul(a | 0, b | 0) >>> 0; }
+function hash01(seed, n) {
+  let x = (imul(seed, 0x9E3779B1) + imul(n, 0x85EBCA77)) >>> 0;
+  x ^= x >>> 16; x = imul(x, 0x7FEB352D);
+  x ^= x >>> 15; x = imul(x, 0x846CA68B);
+  x ^= x >>> 16;
+  return (x >>> 0) / 4294967296;
+}
+
+// Mirror of eval_curve() in flow_ui_server.py so the preview matches playback.
+// A curve is a base shape (`type`) plus two optional modifiers that stack on
+// any shape: `spikes` (random superimposed pulses) and `jitter` (noise band).
+function evalCurve(c, p) {
+  const base = +c.base || 0, amp = +c.amplitude || 0, phase = +c.phase || 0;
+  let ph = (p + phase) % 1; if (ph < 0) ph += 1;
+  let v;
+  switch (c.type) {
+    case "sine":   v = base + amp * Math.sin(2 * Math.PI * ph); break;
+    case "ramp":   v = base + amp * ph; break;
+    case "triangle": v = base + amp * (1 - Math.abs(2 * ph - 1)); break;
+    case "square": { const duty = c.duty == null ? 0.5 : +c.duty; v = ph < duty ? base + amp : base; break; }
+    case "spike": {
+      const pos = c.pos == null ? 0.5 : +c.pos, width = c.width == null ? 0.08 : +c.width;
+      let d = Math.abs(ph - pos); d = Math.min(d, 1 - d);
+      v = d < width / 2 ? base + amp : base; break;
+    }
+    case "day":   { const duty = c.duty == null ? 0.5 : +c.duty; v = ph < duty ? base + amp : base; break; }
+    case "night": { const duty = c.duty == null ? 0.5 : +c.duty; v = ph >= (1 - duty) ? base + amp : base; break; }
+    default:      v = base;   // "constant"
+  }
+  // Modifier: superimposed random spikes.
+  const nspk = (c.spikes | 0);
+  if (nspk > 0) {
+    const seed = (c.seed | 0) || 0;
+    const spkAmp = c.spike_amp == null ? (amp || base) : +c.spike_amp;
+    const spkW = c.spike_width == null ? 0.04 : +c.spike_width;
+    for (let k = 0; k < nspk; k++) {
+      const pos = hash01(seed, k);
+      let d = Math.abs(ph - pos); d = Math.min(d, 1 - d);
+      if (d < spkW / 2) v += spkAmp;
+    }
+  }
+  // Modifier: jitter / noise band (piecewise-constant per bucket).
+  const jit = +c.jitter || 0;
+  if (jit > 0) {
+    const seed = (c.seed | 0) || 0;
+    const bucket = Math.floor(ph * JITTER_BUCKETS);
+    const r = hash01(seed ^ 0x5BD1E995, bucket);
+    v *= 1 + jit * (r - 0.5) * 2;
+  }
+  return Math.max(0, Math.min(v, CONFIG.max_qps));
+}
+
+// Nearest-rank percentile matching the server's _percentile() index convention.
+function pctl(sorted, q) {
+  if (!sorted.length) return null;
+  if (q <= 0) return sorted[0];
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
+}
+// Aggregate the latency metrics for one tenant over the trailing `windowSec`
+// ending at `tEndMs`, from the client-side raw sample buffer.
+function aggFromRaw(fid, tEndMs, windowSec) {
+  const rb = rawHistory[fid] || [];
+  const cutoff = tEndMs - windowSec * 1000;
+  const ttfts = [], totals = [];
+  for (const s of rb) {
+    if (s.t > cutoff && s.t <= tEndMs) { ttfts.push(s.ttft); totals.push(s.total); }
+  }
+  ttfts.sort((a, b) => a - b); totals.sort((a, b) => a - b);
+  return {
+    med_ttft: pctl(ttfts, 0.5), p95_ttft: pctl(ttfts, 0.95), max_ttft: pctl(ttfts, 1.0),
+    med_total: pctl(totals, 0.5), p95_total: pctl(totals, 0.95), max_total: pctl(totals, 1.0),
+  };
+}
 
 const METRIC_LABELS = {
   p95_ttft: "P95 time-to-first-token (s)",
@@ -234,25 +527,45 @@ async function init() {
     b.addEventListener("click", () => setMode(b.dataset.mode));
   });
 
-  // metric selector
-  document.querySelectorAll("#metric-seg button").forEach(b => {
-    b.addEventListener("click", () => {
-      metric = b.dataset.metric;
-      document.querySelectorAll("#metric-seg button").forEach(x => x.classList.remove("active"));
-      b.classList.add("active");
-      draw();
-    });
+  // metric selector — the live and scenarios charts share the selected metric,
+  // so either button group drives both (kept visually in sync by setMetric).
+  document.querySelectorAll("#metric-seg button, #scn-metric-seg button").forEach(b => {
+    b.addEventListener("click", () => setMetric(b.dataset.metric));
   });
   document.getElementById("span-sel").addEventListener("change", e => { chartSpan = +e.target.value; draw(); });
-  document.getElementById("window-sel").addEventListener("change", e => { smoothing = +e.target.value; });
+  // Avg window (smoothing) is global; both selectors set it and stay in sync.
+  document.getElementById("window-sel").addEventListener("change", e => setSmoothing(+e.target.value));
+  document.getElementById("scn-window-sel").addEventListener("change", e => setSmoothing(+e.target.value));
   document.getElementById("reset-btn").addEventListener("click", async () => {
     await fetch("/api/reset", { method: "POST" });
     for (const k in history) history[k] = [];
+    for (const k in rawHistory) rawHistory[k] = [];
+    sampleCursor = null;
     draw();
   });
   document.getElementById("zero-btn").addEventListener("click", () => {
     for (const t of CONFIG.tenants) setTarget(t.fairness_id, 0, true);
   });
+
+  // ----- scenarios view -----
+  buildPresets();
+  renderPresets();
+  loadPreset(0);   // populate the builder with the first preset
+  loadSaved();     // pull any on-disk saved scenarios
+
+  document.querySelectorAll(".nav button").forEach(b => {
+    b.addEventListener("click", () => setView(b.dataset.view));
+  });
+  document.getElementById("scn-play").addEventListener("click", scnPlay);
+  document.getElementById("scn-pause").addEventListener("click", scnPause);
+  document.getElementById("scn-reset").addEventListener("click", scnReset);
+  document.getElementById("scn-save").addEventListener("click", saveScenario);
+  document.getElementById("scn-window").addEventListener("input", e => {
+    scnWindow = Math.max(10, Math.min(+e.target.value || 60, 300));
+    draw();   // re-scale both the traffic plan and the measured-latency chart
+  });
+  document.getElementById("scn-loop").addEventListener("change", e => { scnBuilder.loop = e.target.checked; });
+  document.getElementById("scn-name").addEventListener("input", () => { activePreset = -1; renderPresets(); });
 
   window.addEventListener("resize", draw);
   draw();
@@ -345,7 +658,9 @@ async function flushTargets() {
 // ---------- polling ----------
 async function poll() {
   try {
-    const data = await fetch("/api/stats?window=" + smoothing).then(r => r.json());
+    const url = "/api/stats?window=" + smoothing
+      + (sampleCursor != null ? "&since=" + sampleCursor : "");
+    const data = await fetch(url).then(r => r.json());
     lastOk = Date.now();
     onStats(data);
     setConn(true);
@@ -380,18 +695,33 @@ function onStats(data) {
   }
 
   const now = data.ts_ms;
+  // Map server monotonic-clock sample timestamps onto the chart's wall-clock ms.
+  // Both come from the same response, so the offset is taken at one instant.
+  const offset = data.ts_ms - data.now * 1000;
+  const cutoff = now - 320000;  // largest span we might show (5m) plus slack
   for (const t of data.tenants) {
+    // Accumulate raw samples into the client buffer (kept longer than the
+    // server retains them, so a window change can recompute the full span).
+    const rb = rawHistory[t.fairness_id] || (rawHistory[t.fairness_id] = []);
+    for (const [ts, ttft, total] of (t.samples || [])) {
+      rb.push({ t: ts * 1000 + offset, ttft, total });
+      if (sampleCursor == null || ts > sampleCursor) sampleCursor = ts;
+    }
+    while (rb.length && rb[0].t < cutoff) rb.shift();
+
     const h = history[t.fairness_id] || (history[t.fairness_id] = []);
     h.push({
       t: now,
-      p95_ttft: t.p95_ttft, med_ttft: t.med_ttft, max_ttft: t.max_ttft,
-      p95_total: t.p95_total, med_total: t.med_total, max_total: t.max_total,
+      ...aggFromRaw(t.fairness_id, now, smoothing),
+      target_qps: t.target_qps, qps: t.qps,
     });
     // prune to the largest span we might show (5m) plus a little slack
-    const cutoff = now - 320000;
     while (h.length && h[0].t < cutoff) h.shift();
   }
-  renderCards(data);
+  if (data.scenario) { scnState = data.scenario; updateScnStatus(); }
+  if (data.experiment) { expState = data.experiment; updateExpStatus(); }
+  if (activeView === "scenarios") renderScnCards(data);
+  else renderCards(data, "cards");
   draw();
 }
 
@@ -399,8 +729,9 @@ function onStats(data) {
 function fmt(v, unit) { return (v === null || v === undefined) ? "—" : v.toFixed(2) + (unit || ""); }
 function latClass(v) { if (v === null || v === undefined) return ""; return v < 2 ? "good" : v < 10 ? "mid" : "hot"; }
 
-function renderCards(data) {
-  const root = document.getElementById("cards");
+function renderCards(data, rootId) {
+  const root = document.getElementById(rootId || "cards");
+  if (!root) return;
   const qps = data.mode === "qps";
   const tenants = [...data.tenants].sort((a, b) => b.priority - a.priority);
   root.innerHTML = tenants.map(t => `
@@ -426,13 +757,100 @@ function renderCards(data) {
   `).join("");
 }
 
+// The six latency percentiles shared by the moving-average and experiment views.
+function latRows(o) {
+  return `
+    <div class="m"><b>med TTFT</b><span class="${latClass(o.med_ttft)}">${fmt(o.med_ttft,"s")}</span></div>
+    <div class="m"><b>p95 TTFT</b><span class="${latClass(o.p95_ttft)}">${fmt(o.p95_ttft,"s")}</span></div>
+    <div class="m"><b>max TTFT</b><span class="${latClass(o.max_ttft)}">${fmt(o.max_ttft,"s")}</span></div>
+    <div class="m"><b>med total</b><span>${fmt(o.med_total,"s")}</span></div>
+    <div class="m"><b>p95 total</b><span>${fmt(o.p95_total,"s")}</span></div>
+    <div class="m"><b>max total</b><span>${fmt(o.max_total,"s")}</span></div>`;
+}
+function codeRow(o) {
+  return `<span class="ok">200: ${o.s_200}</span>`
+    + `<span class="warn">429: ${o.s_429}</span>`
+    + `<span class="bad">503: ${o.s_503}</span>`
+    + `<span class="bad">err: ${o.s_err}</span>`;
+}
+
+// Scenarios-view cards: each tenant shows the trailing moving-average window
+// next to the cumulative metrics accumulated since the experiment started.
+function renderScnCards(data) {
+  const root = document.getElementById("scn-cards");
+  if (!root) return;
+  const qps = data.mode === "qps";
+  const tenants = [...data.tenants].sort((a, b) => b.priority - a.priority);
+  const expHdr = data.experiment && data.experiment.running
+    ? `Since experiment start · ${Math.floor(data.experiment.elapsed)}s`
+    : (data.experiment && data.experiment.has_result ? "Experiment (final)" : "Since experiment start");
+  root.innerHTML = tenants.map(t => {
+    const e = t.exp;   // cumulative stats for this tenant, or null
+    const movInflight = `
+      <div class="m"><b>in-flight</b><span>${qps ? t.active : t.active + " / " + t.target}</span></div>
+      <div class="m"><b>QPS</b><span>${qps ? t.qps.toFixed(1) + " / " + t.target_qps.toFixed(1) : t.qps.toFixed(1)}</span></div>`;
+    const expExtra = e ? `
+      <div class="m"><b>requests</b><span>${e.samples}</span></div>
+      <div class="m"><b>avg QPS</b><span>${e.qps.toFixed(2)}</span></div>` : "";
+    return `
+      <div class="card">
+        <div class="ttl"><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>${t.fairness_id}</div>
+        <div class="twocol">
+          <div class="subcard">
+            <div class="col-h">Moving avg · ${smoothing}s window</div>
+            <div class="metrics">${latRows(t)}${movInflight}</div>
+            <div class="codes">${codeRow(t)}</div>
+          </div>
+          <div class="subcard${e ? "" : " muted-col"}">
+            <div class="col-h"><span class="accent">${expHdr}</span></div>
+            ${e
+              ? `<div class="metrics">${latRows(e)}${expExtra}</div><div class="codes">${codeRow(e)}</div>`
+              : `<div class="no-exp">No experiment yet — press <b>Run</b> to accumulate cumulative metrics here.</div>`}
+          </div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function updateExpStatus() {
+  const bar = document.getElementById("exp-bar");
+  const st = document.getElementById("exp-state");
+  const sub = document.getElementById("exp-sub");
+  if (!bar) return;
+  if (expState.running) {
+    bar.classList.add("running");
+    st.textContent = `● ${expState.name || "Experiment"} running`;
+    sub.textContent = `Accumulating cumulative metrics · ${Math.floor(expState.elapsed)}s elapsed. Press Reset to stop, or Run to start a fresh experiment.`;
+  } else if (expState.has_result) {
+    bar.classList.remove("running");
+    st.textContent = `■ ${expState.name || "Experiment"} ended`;
+    sub.textContent = `Final cumulative results shown below · ran ${Math.floor(expState.elapsed)}s. Press Run to start a fresh experiment.`;
+  } else {
+    bar.classList.remove("running");
+    st.textContent = "No experiment running";
+    sub.textContent = "Build a scenario, then press Run to start a fresh experiment — every Run accumulates metrics from zero alongside the moving averages.";
+  }
+}
+
 // ---------- canvas chart ----------
+// Dispatch to whichever view is active. Both views share the same latency
+// history; the scenarios view also redraws its traffic-plan preview.
 function draw() {
-  const canvas = document.getElementById("chart");
   if (!CONFIG) return;
+  if (activeView === "scenarios") {
+    drawLatency("scn-latency", 240, "scn-y-label", scnWindow);
+    drawPreview("preview");
+  } else {
+    drawLatency("chart", 340, "y-label", chartSpan);
+  }
+}
+
+function drawLatency(canvasId, cssH, yLabelId, span) {
+  span = span || chartSpan;
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !CONFIG) return;
   const dpr = window.devicePixelRatio || 1;
   const cssW = canvas.clientWidth || canvas.parentElement.clientWidth;
-  const cssH = 340;
   canvas.width = cssW * dpr; canvas.height = cssH * dpr;
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -441,9 +859,10 @@ function draw() {
   const padL = 52, padR = 12, padT = 12, padB = 24;
   const W = cssW - padL - padR, H = cssH - padT - padB;
   const now = Date.now();
-  const tMin = now - chartSpan * 1000, tMax = now;
+  const tMin = now - span * 1000, tMax = now;
 
-  document.getElementById("y-label").textContent = METRIC_LABELS[metric];
+  const yLabelEl = document.getElementById(yLabelId);
+  if (yLabelEl) yLabelEl.textContent = METRIC_LABELS[metric];
 
   // find y-max across visible data
   let yMax = 0;
@@ -466,11 +885,11 @@ function draw() {
     ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + W, y); ctx.stroke(); ctx.globalAlpha = 1;
     ctx.textAlign = "right"; ctx.fillText(val.toFixed(val < 10 ? 1 : 0) + "s", padL - 8, y);
   }
-  // x labels (every ~10s relative)
+  // x labels (relative seconds, now on the right)
   ctx.textAlign = "center"; ctx.textBaseline = "top";
-  const step = chartSpan <= 60 ? 10 : chartSpan <= 120 ? 20 : 60;
-  for (let s = 0; s <= chartSpan; s += step) {
-    const x = padL + W * (1 - s / chartSpan);
+  const step = spanStep(span);
+  for (let s = 0; s <= span; s += step) {
+    const x = padL + W * (1 - s / span);
     ctx.fillText("-" + s + "s", x, padT + H + 6);
   }
 
@@ -498,6 +917,423 @@ function draw() {
     ctx.fillStyle = getCSS("--muted"); ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.font = "13px monospace";
     ctx.fillText("Waiting for completed requests… drag a slider up to start traffic.", padL + W / 2, padT + H / 2);
+  }
+}
+
+// ---------- scenarios view ----------
+function setView(v) {
+  activeView = v;
+  document.getElementById("view-live").hidden = v !== "live";
+  document.getElementById("view-scenarios").hidden = v !== "scenarios";
+  document.querySelectorAll(".nav button").forEach(b => b.classList.toggle("active", b.dataset.view === v));
+  draw();
+}
+
+// Shared metric selection: set the metric, sync both button groups, redraw.
+function setMetric(m) {
+  if (!METRIC_LABELS[m]) return;
+  metric = m;
+  document.querySelectorAll("#metric-seg button, #scn-metric-seg button").forEach(x =>
+    x.classList.toggle("active", x.dataset.metric === m));
+  draw();
+}
+
+// Shared trailing aggregation window: set it and keep both selectors in sync.
+// Aggregation is client-side, so re-aggregate every existing plotted point over
+// the new window from the raw buffer, then redraw — previous points update too.
+function setSmoothing(s) {
+  smoothing = s;
+  const a = document.getElementById("window-sel"), b = document.getElementById("scn-window-sel");
+  if (a) a.value = s;
+  if (b) b.value = s;
+  for (const fid in history) {
+    for (const p of history[fid]) Object.assign(p, aggFromRaw(fid, p.t, smoothing));
+  }
+  draw();
+}
+
+function colorClass(fid) {
+  if (fid === "premium-tenant") return "premium";
+  if (fid === "standard-tenant") return "standard";
+  return "";
+}
+function num(v) { v = +v || 0; return Math.round(v * 100) / 100; }
+
+// Presets are defined as fractions of max_qps so they scale with --max-qps.
+function buildPresets() {
+  const M = CONFIG.max_qps;
+  PRESETS = [
+    {
+      name: "Sinusoidal",
+      desc: "Both tiers are sine waves; the standard tier is offset by phase. At phase 0.5 they perfectly overlap — the two flows complement each other so total load stays balanced.",
+      period: 60, loop: true,
+      curves: {
+        "premium-tenant":  { type: "sine", base: 0.5 * M, amplitude: 0.5 * M, phase: 0 },
+        "standard-tenant": { type: "sine", base: 0.5 * M, amplitude: 0.5 * M, phase: 0.5 },
+      },
+    },
+    {
+      name: "Spike",
+      desc: "Premium is constant; standard spikes suddenly each period.",
+      period: 30, loop: true,
+      curves: {
+        "premium-tenant":  { type: "constant", base: 0.5 * M },
+        "standard-tenant": { type: "spike", base: 0.1 * M, amplitude: 0.9 * M, pos: 0.5, width: 0.08 },
+      },
+    },
+  ];
+}
+
+function renderPresets() {
+  const root = document.getElementById("presets");
+  root.innerHTML = "";
+  PRESETS.forEach((p, i) => {
+    const b = document.createElement("button");
+    b.className = "preset" + (i === activePreset ? " active" : "");
+    b.innerHTML = `<div class="pname">${p.name}</div><div class="pdesc">${p.desc}</div>`;
+    b.addEventListener("click", () => loadPreset(i));
+    root.appendChild(b);
+  });
+}
+
+function loadPreset(i) {
+  const p = PRESETS[i];
+  activePreset = i;
+  loadScenarioInto(p);
+  renderPresets();
+}
+
+// Shared loader: copy a {name, period, loop, curves, window?} record into the
+// builder. Each tenant's cycle length is materialized onto its own curve, so the
+// scenario-level `period` is only a fallback; the displayed window is separate.
+function loadScenarioInto(rec) {
+  const base = +rec.period || 60;
+  const curves = JSON.parse(JSON.stringify(rec.curves));
+  let maxPeriod = base;
+  for (const fid in curves) {
+    curves[fid].period = +curves[fid].period || base;
+    maxPeriod = Math.max(maxPeriod, curves[fid].period);
+  }
+  scnBuilder = { name: rec.name, period: base, loop: rec.loop !== false, curves };
+  // Default the dashboard window to one full cycle of the slowest tenant.
+  scnWindow = Math.max(10, Math.min(+rec.window || maxPeriod, 300));
+  document.getElementById("scn-name").value = rec.name || "";
+  document.getElementById("scn-window").value = scnWindow;
+  document.getElementById("scn-loop").checked = rec.loop !== false;
+  buildScnEditors();
+  drawPreview("preview");
+}
+
+// ----- saved scenarios (on-disk files) -----
+async function loadSaved() {
+  try {
+    const data = await fetch("/api/scenarios").then(r => r.json());
+    SAVED = Array.isArray(data.scenarios) ? data.scenarios : [];
+  } catch (e) { SAVED = []; }
+  renderSaved();
+}
+
+function renderSaved() {
+  const root = document.getElementById("saved");
+  const empty = document.getElementById("saved-empty");
+  if (!root) return;
+  if (empty) empty.style.display = SAVED.length ? "none" : "";
+  root.innerHTML = "";
+  SAVED.forEach(rec => {
+    const tiers = Object.keys(rec.curves || {}).length;
+    const row = document.createElement("div");
+    row.className = "preset";
+    row.innerHTML = `<div class="pname">${escapeHtml(rec.name || rec.slug)}`
+      + `<span class="scn-del" title="Delete" style="float:right;color:var(--muted);cursor:pointer;padding:0 2px;">✕</span></div>`
+      + `<div class="pdesc">window ${rec.window || rec.period || 60}s · ${rec.loop !== false ? "loop" : "once"} · ${tiers} tier${tiers === 1 ? "" : "s"}</div>`;
+    // Clicking the row loads it into the builder…
+    row.addEventListener("click", () => {
+      activePreset = -1;
+      loadScenarioInto(rec);
+      renderPresets();
+    });
+    // …except the ✕, which deletes it (stop the click from also loading).
+    row.querySelector(".scn-del").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      deleteSaved(rec.slug, rec.name);
+    });
+    root.appendChild(row);
+  });
+}
+
+async function saveScenario() {
+  scnBuilder.name = document.getElementById("scn-name").value.trim();
+  scnBuilder.loop = document.getElementById("scn-loop").checked;
+  if (!scnBuilder.name) { alert("Give the scenario a name before saving."); return; }
+  try {
+    const res = await fetch("/api/scenarios/save", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: scnBuilder.name, period: scnBuilder.period, loop: scnBuilder.loop, window: scnWindow, curves: scnBuilder.curves }),
+    }).then(r => r.json());
+    if (res.error) { alert("Save failed: " + res.error); return; }
+    await loadSaved();
+  } catch (e) { alert("Save failed: " + e); }
+}
+
+async function deleteSaved(slug, name) {
+  if (!confirm(`Delete saved scenario "${name || slug}"?`)) return;
+  try {
+    await fetch("/api/scenarios/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug }),
+    });
+    await loadSaved();
+  } catch (e) { alert("Delete failed: " + e); }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function applyFieldVisibility(el, type) {
+  // Shape fields depend on the type; modifier fields are always shown.
+  const show = new Set([...fieldsFor(type), ...MODIFIER_FIELDS]);
+  el.querySelectorAll("[data-show]").forEach(r => { r.style.display = show.has(r.dataset.show) ? "" : "none"; });
+}
+
+function buildScnEditors() {
+  const root = document.getElementById("scn-editors");
+  root.innerHTML = "";
+  const tenants = [...CONFIG.tenants].sort((a, b) => b.priority - a.priority);
+  for (const t of tenants) {
+    const fid = t.fairness_id;
+    const c = scnBuilder.curves[fid] || (scnBuilder.curves[fid] = { type: "constant", base: 0.5 * CONFIG.max_qps, amplitude: 0.3 * CONFIG.max_qps, period: scnBuilder.period || 60 });
+    const color = TENANT_COLORS[fid] || getCSS("--accent");
+    const el = document.createElement("div");
+    el.className = "scn-tenant";
+    const mq = CONFIG.max_qps;
+    el.innerHTML = `
+      <div class="scn-row"><div><span class="dot" style="background:${color}"></span><span class="name ${colorClass(fid)}">${fid}</span></div></div>
+      <div class="scn-row"><label title="Length of this tenant's cycle. Its curve repeats every period (independent of the other tenants).">Period (s)</label><input type="number" min="2" max="3600" step="1" data-fid="${fid}" data-k="period" value="${num(c.period || scnBuilder.period)}" /></div>
+      <div class="scn-row"><label>Curve</label>
+        <select data-fid="${fid}" data-k="type">${CURVE_TYPES.map(ct => `<option value="${ct.v}" ${c.type === ct.v ? "selected" : ""}>${ct.label}</option>`).join("")}</select></div>
+      <div class="scn-row" data-show="base"><label>Base q/s</label><input type="number" min="0" max="${mq}" step="0.1" data-fid="${fid}" data-k="base" value="${num(c.base)}" /></div>
+      <div class="scn-row" data-show="amplitude"><label>Amplitude q/s</label><input type="number" min="0" max="${mq}" step="0.1" data-fid="${fid}" data-k="amplitude" value="${num(c.amplitude)}" /></div>
+      <div class="scn-row" data-show="phase"><label title="Shift the wave along the period (0–1). 0.5 = perfect overlap with the other tier.">Phase · 0.5 = overlap</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="phase" value="${num(c.phase || 0)}" /></div>
+      <div class="scn-row" data-show="pos"><label title="Where in the period the spike happens (0–1).">Spike at</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="pos" value="${num(c.pos == null ? 0.5 : c.pos)}" /></div>
+      <div class="scn-row" data-show="width"><label title="Spike width as a fraction of the period.">Spike width</label><input type="number" min="0.01" max="1" step="0.01" data-fid="${fid}" data-k="width" value="${num(c.width == null ? 0.08 : c.width)}" /></div>
+      <div class="scn-row" data-show="duty"><label title="Fraction of the period that is 'on' (high).">Duty</label><input type="number" min="0.05" max="0.95" step="0.05" data-fid="${fid}" data-k="duty" value="${num(c.duty == null ? 0.5 : c.duty)}" /></div>
+      <div class="scn-row" data-show="spikes" style="margin-top:10px;"><label title="Superimpose this many random pulses per period on top of the shape above. 0 = none.">Random spikes (#)</label><input type="number" min="0" max="50" step="1" data-fid="${fid}" data-k="spikes" value="${c.spikes | 0}" /></div>
+      <div class="scn-row" data-show="spike_amp"><label title="Height of each random spike, in q/s.">↳ spike q/s</label><input type="number" min="0" max="${mq}" step="0.1" data-fid="${fid}" data-k="spike_amp" value="${num(c.spike_amp == null ? 0.5 * mq : c.spike_amp)}" /></div>
+      <div class="scn-row" data-show="spike_width"><label title="Width of each random spike as a fraction of the period.">↳ spike width</label><input type="number" min="0.01" max="0.5" step="0.01" data-fid="${fid}" data-k="spike_width" value="${num(c.spike_width == null ? 0.04 : c.spike_width)}" /></div>
+      <div class="scn-row" data-show="jitter"><label title="Random noise band: multiplies the rate by 1±jitter, varying second to second. 0 = smooth.">Jitter (0–1)</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="jitter" value="${num(c.jitter || 0)}" /></div>
+      <div class="scn-row" data-show="seed"><label title="Seed for the random spikes & jitter. Same seed → same 'random' arrangement every replay. Change it to reshuffle.">Random seed</label><input type="number" min="0" max="99999" step="1" data-fid="${fid}" data-k="seed" value="${c.seed == null ? 1 : (c.seed | 0)}" /></div>
+    `;
+    root.appendChild(el);
+    applyFieldVisibility(el, c.type);
+    el.querySelectorAll("[data-k]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        const k = inp.dataset.k, f = inp.dataset.fid;
+        scnBuilder.curves[f][k] = (k === "type") ? inp.value : (inp.value === "" ? 0 : +inp.value);
+        if (k === "type") applyFieldVisibility(el, inp.value);
+        activePreset = -1; renderPresets();
+        drawPreview("preview");
+      });
+    });
+  }
+}
+
+// Lock every setup control while a scenario is running, so the running config
+// can't drift out from under the live traffic. Reset is the only way back.
+function setBuilderLocked(locked) {
+  const panel = document.getElementById("scn-builder-panel");
+  if (!panel) return;
+  panel.classList.toggle("locked", locked);
+  panel.querySelectorAll("#scn-editors input, #scn-editors select, #scn-name, #scn-window, #scn-loop")
+    .forEach(el => { el.disabled = locked; });
+  const save = document.getElementById("scn-save");
+  if (save) save.disabled = locked;   // don't save a config mid-run
+}
+
+function updateScnStatus() {
+  const playing = scnState.playing;
+  const paused = !playing && scnPaused;   // run frozen for review
+  // Lock the setup while running, and keep it locked while paused so the frozen
+  // run's config and results stay put until Run (fresh) or Reset (edit).
+  setBuilderLocked(playing || paused);
+
+  // Run is available except while traffic is actively flowing; Pause only makes
+  // sense while running.
+  const play = document.getElementById("scn-play");
+  const pause = document.getElementById("scn-pause");
+  if (play) play.disabled = playing;
+  if (pause) pause.disabled = !playing;
+
+  // Big Setup ↔ Running ↔ Paused banner at the top of the builder.
+  const banner = document.getElementById("scn-mode-banner");
+  if (banner) {
+    banner.classList.toggle("running", playing);
+    banner.classList.toggle("paused", paused);
+    banner.classList.toggle("setup", !playing && !paused);
+    document.getElementById("scn-mode-badge").textContent = playing ? "Running" : paused ? "Paused" : "Setup";
+    document.getElementById("scn-mode-text").textContent = playing
+      ? `Running "${scnState.name || "scenario"}" · ${Math.floor(scnState.elapsed)}s${scnState.loop ? " · looping" : ""}. Editing is locked — press Pause to freeze, or Reset to return to setup.`
+      : paused
+      ? `Paused "${scnState.name || "scenario"}" — review the experiment results above. Press Run for a fresh experiment, or Reset to edit.`
+      : "Build your scenario below, then press Run to start it.";
+  }
+
+  const el = document.getElementById("scn-status");
+  if (!el) return;
+  if (playing) {
+    el.textContent = `▶ ${scnState.name || "running"} · ${Math.floor(scnState.elapsed)}s${scnState.loop ? " · loop" : ""}`;
+    el.style.color = getCSS("--premium");
+  } else if (paused) {
+    el.textContent = "paused";
+    el.style.color = getCSS("--accent");
+  } else {
+    el.textContent = "stopped";
+    el.style.color = getCSS("--muted");
+  }
+}
+
+async function scnPlay() {
+  scnBuilder.name = document.getElementById("scn-name").value;
+  scnBuilder.loop = document.getElementById("scn-loop").checked;
+  // Lock the setup immediately rather than waiting for the next poll.
+  scnPaused = false;
+  scnState = { ...scnState, playing: true, name: scnBuilder.name, loop: scnBuilder.loop, elapsed: 0 };
+  expState = { running: true, name: scnBuilder.name, elapsed: 0, has_result: false };
+  updateScnStatus();
+  updateExpStatus();
+  try {
+    // Every Run is a fresh experiment: clear prior buffers, then start the
+    // traffic and begin accumulating cumulative metrics from zero together.
+    await fetch("/api/reset", { method: "POST" });
+    for (const k in history) history[k] = [];
+    for (const k in rawHistory) rawHistory[k] = [];
+    sampleCursor = null;
+    await fetch("/api/experiment/start", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: scnBuilder.name }),
+    });
+    await fetch("/api/scenario/start", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: scnBuilder.name, period: scnBuilder.period, loop: scnBuilder.loop, curves: scnBuilder.curves }),
+    });
+  } catch (e) {}
+}
+
+// Pause = freeze the run for review: stop the traffic and end the experiment so
+// its final cumulative stats are kept on screen, but DON'T clear the charts or
+// unlock the builder. From here, Run starts fresh or Reset returns to editing.
+async function scnPause() {
+  scnPaused = true;
+  scnState = { ...scnState, playing: false };
+  expState = { ...expState, running: false, has_result: true };
+  updateScnStatus();
+  updateExpStatus();
+  try { await fetch("/api/scenario/stop", { method: "POST" }); } catch (e) {}
+  try { await fetch("/api/experiment/stop", { method: "POST" }); } catch (e) {}
+}
+
+// Reset = return to the initial setup state: stop driving traffic, clear the
+// measured-latency charts/counters, and unlock the builder for editing again.
+async function scnReset() {
+  try { await fetch("/api/scenario/stop", { method: "POST" }); } catch (e) {}
+  try { await fetch("/api/experiment/stop", { method: "POST" }); } catch (e) {}
+  try { await fetch("/api/reset", { method: "POST" }); } catch (e) {}
+  for (const k in history) history[k] = [];
+  for (const k in rawHistory) rawHistory[k] = [];
+  sampleCursor = null;
+  scnPaused = false;
+  scnState = { ...scnState, playing: false, elapsed: 0 };
+  expState = { running: false, name: "", elapsed: 0, has_result: false };
+  updateScnStatus();
+  updateExpStatus();
+  draw();
+}
+
+// A tenant's effective cycle length is its own `period` if set, else the
+// scenario fallback. Mirrored in run_scenario_driver().
+function effPeriod(c) { const p = +(c && c.period) || 0; return p > 0 ? p : (scnBuilder.period || 60); }
+
+// Pick an x-axis label step that keeps a span to <= ~8 ticks. Shared by the
+// traffic plan and the latency chart so the two line up.
+function spanStep(span) {
+  const cands = [5, 10, 15, 20, 30, 60, 120, 300, 600];
+  for (const c of cands) if (span / c <= 8) return c;
+  return Math.ceil(span / 8 / 60) * 60;
+}
+
+// Traffic plan. While a scenario plays, plot the *actual* target q/s each tenant
+// is being driven at over the same trailing window (and time axis) as the
+// measured-latency chart, so the two charts line up moment-for-moment. While
+// stopped, fall back to a design preview of the planned curves over the window.
+function drawPreview(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !CONFIG || !scnBuilder) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || canvas.parentElement.clientWidth;
+  const cssH = 200;
+  canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const padL = 44, padR = 12, padT = 12, padB = 22;
+  const W = cssW - padL - padR, H = cssH - padT - padB;
+  const N = 240;
+  const span = scnWindow;
+  const live = scnState.playing;
+  const now = Date.now(), tMin = now - span * 1000;
+
+  // Phase of a given tenant at fraction `f` through the design-preview window.
+  const phaseAt = (c, f) => (f * span / effPeriod(c)) % 1;
+
+  let yMax = CONFIG.max_qps;
+  if (live) {
+    for (const fid in scnBuilder.curves)
+      for (const p of (history[fid] || []))
+        if (p.t >= tMin && p.target_qps != null && p.target_qps > yMax) yMax = p.target_qps;
+  } else {
+    for (const fid in scnBuilder.curves)
+      for (let i = 0; i <= N; i++) { const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], i / N)); if (v > yMax) yMax = v; }
+  }
+  yMax = niceCeil(Math.max(yMax, 0.1));
+
+  ctx.strokeStyle = getCSS("--line"); ctx.fillStyle = getCSS("--muted");
+  ctx.lineWidth = 1; ctx.font = "11px monospace"; ctx.textBaseline = "middle";
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + H * (i / 4), val = yMax * (1 - i / 4);
+    ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + W, y); ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.textAlign = "right"; ctx.fillText(val.toFixed(val < 10 ? 1 : 0), padL - 8, y);
+  }
+  // x labels: trailing seconds, now on the right (matches the latency chart).
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  const step = spanStep(span);
+  for (let s = 0; s <= span; s += step) {
+    const x = padL + W * (1 - s / span);
+    ctx.fillText("-" + s + "s", x, padT + H + 6);
+  }
+
+  const yOf = v => padT + H * (1 - v / yMax);
+  if (live) {
+    const xOf = t => padL + W * ((t - tMin) / (span * 1000));
+    for (const fid in scnBuilder.curves) {
+      const pts = (history[fid] || []).filter(p => p.t >= tMin && p.target_qps != null);
+      if (!pts.length) continue;
+      ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
+      ctx.beginPath();
+      pts.forEach((p, i) => { const x = xOf(p.t), y = yOf(Math.min(p.target_qps, yMax)); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+      ctx.stroke();
+    }
+  } else {
+    const xOf = f => padL + W * f;   // oldest (left) -> now (right)
+    for (const fid in scnBuilder.curves) {
+      ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
+      ctx.beginPath();
+      for (let i = 0; i <= N; i++) {
+        const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], i / N)), x = xOf(i / N), y = yOf(Math.min(v, yMax));
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
   }
 }
 
