@@ -93,6 +93,34 @@ def _percentile(sorted_vals: List[float], q: float):
     return sorted_vals[idx]
 
 
+def _status_buckets(counts: dict):
+    """Collapse a status_counts dict into (200, 429, 503, other) totals."""
+    s_200 = counts.get("200", 0)
+    s_429 = sum(c for k, c in counts.items() if "429" in str(k))
+    s_503 = sum(c for k, c in counts.items() if "503" in str(k))
+    s_err = sum(
+        c for k, c in counts.items()
+        if "200" not in str(k) and "429" not in str(k) and "503" not in str(k)
+    )
+    return s_200, s_429, s_503, s_err
+
+
+def raw_samples(metrics: MetricsCollector, fid: str, since: float, now: float) -> list:
+    """Return [ts, ttft, total] for every completed request after ``since``.
+
+    The browser keeps its own raw buffer and does the windowed aggregation
+    client-side, so changing the avg window can recompute *all* plotted points
+    instead of only future ones. ``ttft_window`` and ``duration_window`` are
+    appended in lockstep (see MetricsCollector.record), so zipping is safe.
+    """
+    floor = (now - MAX_BUFFER_WINDOW) if since is None else since
+    out = []
+    for (ts, ttft), (_ts, dur) in zip(metrics.ttft_window[fid], metrics.duration_window[fid]):
+        if ts > floor:
+            out.append([round(ts, 3), ttft, dur])
+    return out
+
+
 def window_stats(metrics: MetricsCollector, fid: str, window_sec: float, now: float) -> dict:
     """Compute trailing-window latency/throughput stats for one tenant."""
     cutoff = now - window_sec
@@ -107,14 +135,7 @@ def window_stats(metrics: MetricsCollector, fid: str, window_sec: float, now: fl
         span = max(now - comps[0], 0.1)
         qps = len(comps) / span
 
-    counts = metrics.status_counts[fid]
-    s_200 = counts.get("200", 0)
-    s_429 = sum(c for k, c in counts.items() if "429" in str(k))
-    s_503 = sum(c for k, c in counts.items() if "503" in str(k))
-    s_err = sum(
-        c for k, c in counts.items()
-        if "200" not in str(k) and "429" not in str(k) and "503" not in str(k)
-    )
+    s_200, s_429, s_503, s_err = _status_buckets(metrics.status_counts[fid])
 
     return {
         "med_ttft": _percentile(ttfts, 0.5),
@@ -128,6 +149,42 @@ def window_stats(metrics: MetricsCollector, fid: str, window_sec: float, now: fl
         "active": metrics.active_requests[fid],
         # Cumulative since process start (or last reset) -- useful for spotting
         # rejections/evictions as you push past capacity.
+        "s_200": s_200,
+        "s_429": s_429,
+        "s_503": s_503,
+        "s_err": s_err,
+    }
+
+
+def experiment_stats(metrics: MetricsCollector, fid: str, start: float, now: float, counts0: dict) -> dict:
+    """Latency/throughput/status accumulated since an experiment's start.
+
+    Unlike :func:`window_stats` (a trailing moving average), this aggregates
+    *every* sample recorded since ``start`` -- the full distribution for the
+    whole experiment run -- and reports status-code counts as deltas from the
+    ``counts0`` snapshot taken when the experiment began, so they reflect only
+    what happened during the experiment rather than since process start.
+    """
+    ttfts = sorted(v for ts, v in metrics.ttft_window[fid] if ts >= start)
+    durs = sorted(v for ts, v in metrics.duration_window[fid] if ts >= start)
+    comps = [ts for ts in metrics.completion_times[fid] if ts >= start]
+
+    elapsed = max(now - start, 0.1)
+    qps = len(comps) / elapsed if comps else 0.0
+
+    cur = _status_buckets(metrics.status_counts[fid])
+    base = _status_buckets(counts0 or {})
+    s_200, s_429, s_503, s_err = (max(0, c - b) for c, b in zip(cur, base))
+
+    return {
+        "med_ttft": _percentile(ttfts, 0.5),
+        "p95_ttft": _percentile(ttfts, 0.95),
+        "max_ttft": _percentile(ttfts, 1.0),
+        "med_total": _percentile(durs, 0.5),
+        "p95_total": _percentile(durs, 0.95),
+        "max_total": _percentile(durs, 1.0),
+        "qps": qps,
+        "samples": len(ttfts),
         "s_200": s_200,
         "s_429": s_429,
         "s_503": s_503,
@@ -198,8 +255,8 @@ async def run_interactive_worker(
 # 3b. SCENARIO PLAYER
 # ==============================================================================
 # A "scenario" drives per-tenant *traffic rate* (QPS) along a curve that repeats
-# every `period` seconds, so you can replay canonical multi-tenant shapes (sine
-# vs cosine, overlapping sines, sudden spikes, day/night batch) hands-free.
+# every `period` seconds, so you can replay canonical multi-tenant shapes
+# (phase-offset sines, sudden spikes, day/night batch) hands-free.
 #
 # The player does not touch the load-generation path at all: it simply writes
 # into the same ``control["rates"]`` dict the QPS sliders write to, and flips the
@@ -258,8 +315,6 @@ def eval_curve(curve: dict, p: float, max_val: float) -> float:
 
     if ctype == "sine":
         v = base + amp * math.sin(2 * math.pi * ph)
-    elif ctype == "cosine":
-        v = base + amp * math.cos(2 * math.pi * ph)
     elif ctype == "ramp":
         # Linear trend from ``base`` up to ``base + amp`` across the period.
         v = base + amp * ph
@@ -367,11 +422,15 @@ async def run_scenario_driver(control: dict, max_qps: float, stop_event: asyncio
             pass
 
 
-async def prune_loop(metrics: MetricsCollector, tenants: List[Tenant], max_window: float, stop_event: asyncio.Event) -> None:
+async def prune_loop(metrics: MetricsCollector, tenants: List[Tenant], max_window: float, control: dict, stop_event: asyncio.Event) -> None:
     """Trim timestamped sample buffers so a long-running session stays bounded.
 
     Status counts are left cumulative on purpose (the UI shows them as running
     totals); only the per-sample latency/throughput buffers are trimmed.
+
+    While an experiment is running we retain everything back to its start (even
+    past ``max_window``) so the cumulative experiment stats cover the whole run,
+    not just the trailing moving-average window.
     """
     while not stop_event.is_set():
         try:
@@ -380,6 +439,9 @@ async def prune_loop(metrics: MetricsCollector, tenants: List[Tenant], max_windo
         except asyncio.TimeoutError:
             pass
         cutoff = time.monotonic() - max_window
+        exp = control["experiment"]
+        if exp["running"]:
+            cutoff = min(cutoff, exp["start"])
         for t in tenants:
             fid = t.fairness_id
             metrics.ttft_window[fid] = [(ts, v) for ts, v in metrics.ttft_window[fid] if ts >= cutoff]
@@ -435,27 +497,44 @@ async def handle_stats(request: web.Request) -> web.Response:
         win = 10.0
     win = max(1.0, min(win, MAX_BUFFER_WINDOW))
 
+    # Cursor for incremental raw-sample streaming. Absent on first poll, which
+    # backfills the whole retained buffer so a window change can recompute history.
+    try:
+        since = float(request.query["since"])
+    except (KeyError, ValueError):
+        since = None
+
     now = time.monotonic()
+    exp = control["experiment"]
     per_tenant = []
     total_target = 0
     total_target_qps = 0.0
     total_active = 0
     total_qps = 0.0
     for t in tenants:
-        s = window_stats(metrics, t.fairness_id, win, now)
-        tgt = int(targets.get(t.fairness_id, 0))
-        tgt_qps = float(rates.get(t.fairness_id, 0.0))
+        fid = t.fairness_id
+        s = window_stats(metrics, fid, win, now)
+        tgt = int(targets.get(fid, 0))
+        tgt_qps = float(rates.get(fid, 0.0))
         total_target += tgt
         total_target_qps += tgt_qps
         total_active += s["active"]
         total_qps += s["qps"]
+        # Cumulative stats for the active experiment, or the frozen final stats
+        # captured when the last experiment ended; None if none has run.
+        if exp["running"]:
+            exp_stats = experiment_stats(metrics, fid, exp["start"], now, exp["counts0"].get(fid, {}))
+        else:
+            exp_stats = exp["results"].get(fid)
         per_tenant.append({
-            "fairness_id": t.fairness_id,
+            "fairness_id": fid,
             "objective": t.inference_objective,
             "priority": t.priority,
             "target": tgt,
             "target_qps": tgt_qps,
             **s,
+            "exp": exp_stats,
+            "samples": raw_samples(metrics, fid, since, now),
         })
 
     capacity = app["args"].capacity
@@ -482,6 +561,18 @@ async def handle_stats(request: web.Request) -> web.Response:
             "loop": scn["loop"],
             "elapsed": scn["elapsed"],
             "phase": scn["phase"],
+        },
+        # An "experiment" is an independent measurement session: it marks a start
+        # time and accumulates every metric since then, alongside (not instead of)
+        # the trailing moving-average window. It is decoupled from scenario
+        # playback -- you can play/stop any number of scenarios within one
+        # experiment and the cumulative numbers keep accruing.
+        "experiment": {
+            "running": exp["running"],
+            "name": exp["name"],
+            "started_ms": exp["started_ms"],
+            "elapsed": (now - exp["start"]) if exp["running"] else exp["result_elapsed"],
+            "has_result": bool(exp["results"]),
         },
         "tenants": per_tenant,
     })
@@ -601,11 +692,70 @@ async def handle_scenario_stop(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def handle_experiment_start(request: web.Request) -> web.Response:
+    """Begin an experiment: mark a start time and accumulate all metrics from it.
+
+    Body: {"name": str}. Independent of scenario playback and of the
+    play/stop controls -- it only snapshots the current status counters (so
+    later counts can be reported as deltas) and records the start time. The
+    stats endpoint then reports cumulative-since-start figures per tenant.
+    """
+    app = request.app
+    metrics: MetricsCollector = app["metrics"]
+    control: dict = app["control"]
+    rates: Dict[str, float] = control["rates"]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = str(body.get("name", "") or "")[:120]
+
+    control["experiment"].update(
+        running=True,
+        name=name,
+        start=time.monotonic(),
+        started_ms=int(time.time() * 1000),
+        # Snapshot per-tenant status counts so the experiment reports deltas.
+        counts0={fid: dict(metrics.status_counts[fid]) for fid in rates},
+        results={},
+        result_elapsed=0.0,
+    )
+    return web.json_response({"ok": True, "name": name})
+
+
+async def handle_experiment_stop(request: web.Request) -> web.Response:
+    """End the active experiment, freezing its final cumulative stats.
+
+    The per-tenant totals are computed once here and stored so the UI keeps
+    showing the final experiment result after it stops (the trailing sample
+    buffers get pruned shortly after, so we can't recompute it later).
+    """
+    app = request.app
+    metrics: MetricsCollector = app["metrics"]
+    control: dict = app["control"]
+    exp = control["experiment"]
+    if exp["running"]:
+        now = time.monotonic()
+        exp["results"] = {
+            fid: experiment_stats(metrics, fid, exp["start"], now, exp["counts0"].get(fid, {}))
+            for fid in control["rates"]
+        }
+        exp["result_elapsed"] = now - exp["start"]
+        exp["running"] = False
+    return web.json_response({"ok": True})
+
+
 async def handle_reset(request: web.Request) -> web.Response:
     """Clear cumulative counters and latency buffers without touching targets."""
     app = request.app
     metrics: MetricsCollector = app["metrics"]
     metrics.reset()
+    # A reset wipes the buffers the experiment accumulates from, so any frozen
+    # experiment result is no longer meaningful -- clear it too.
+    exp = app["control"]["experiment"]
+    exp["running"] = False
+    exp["results"] = {}
+    exp["result_elapsed"] = 0.0
     return web.json_response({"ok": True})
 
 
@@ -765,6 +915,18 @@ async def on_startup(app: web.Application) -> None:
             "phase": 0.0,
             "curves": {},
         },
+        # Active/last experiment (see handle_experiment_*). `counts0` snapshots
+        # per-tenant status counts at start so they can be reported as deltas;
+        # `results` holds the frozen final stats once stopped.
+        "experiment": {
+            "running": False,
+            "name": "",
+            "start": 0.0,
+            "started_ms": 0,
+            "counts0": {},
+            "results": {},
+            "result_elapsed": 0.0,
+        },
     }
 
     connector = aiohttp.TCPConnector(limit=0)
@@ -789,7 +951,7 @@ async def on_startup(app: web.Application) -> None:
         asyncio.create_task(run_interactive_worker(generator, t, control, stop_event))
         for t in tenants
     ]
-    pruner = asyncio.create_task(prune_loop(metrics, tenants, MAX_BUFFER_WINDOW, stop_event))
+    pruner = asyncio.create_task(prune_loop(metrics, tenants, MAX_BUFFER_WINDOW, control, stop_event))
     scenario_driver = asyncio.create_task(
         run_scenario_driver(control, float(args.max_qps), stop_event)
     )
@@ -852,6 +1014,8 @@ def main() -> None:
     app.router.add_post("/api/mode", handle_set_mode)
     app.router.add_post("/api/scenario/start", handle_scenario_start)
     app.router.add_post("/api/scenario/stop", handle_scenario_stop)
+    app.router.add_post("/api/experiment/start", handle_experiment_start)
+    app.router.add_post("/api/experiment/stop", handle_experiment_stop)
     app.router.add_get("/api/scenarios", handle_scenarios_list)
     app.router.add_post("/api/scenarios/save", handle_scenarios_save)
     app.router.add_post("/api/scenarios/delete", handle_scenarios_delete)
