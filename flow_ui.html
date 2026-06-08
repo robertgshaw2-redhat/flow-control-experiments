@@ -211,6 +211,8 @@
       <div class="panel">
         <h2>Preset scenarios</h2>
         <div class="presets" id="presets"></div>
+        <h2 style="margin-top:18px;">Saved scenarios <span id="saved-empty" style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;">— none yet; build one and press Save</span></h2>
+        <div class="presets" id="saved"></div>
         <h2 style="margin-top:18px;">Builder</h2>
         <div class="scn-row"><label>Name</label><input type="text" id="scn-name" placeholder="My scenario" /></div>
         <div class="scn-row"><label title="Length of one full cycle. The plan repeats every period.">Period (s)</label><input type="number" id="scn-period" min="2" max="3600" step="1" value="60" /></div>
@@ -219,6 +221,7 @@
         <div class="play-row">
           <button id="scn-play" class="primary">▶ Play</button>
           <button id="scn-stop">■ Stop</button>
+          <button id="scn-save" title="Save the current builder scenario to a file you can re-load and share">💾 Save</button>
           <span class="scn-status" id="scn-status">stopped</span>
         </div>
       </div>
@@ -288,29 +291,54 @@ let scnState = { playing: false, phase: 0, elapsed: 0, period: 60, loop: true, n
 let scnBuilder = null;                          // { name, period, loop, curves: {fid: curve} }
 let PRESETS = [];
 let activePreset = -1;
+let SAVED = [];                                // saved scenarios from disk
 
-// Curve types offered in the builder; `fields` drives which inputs are shown.
+// Curve types offered in the builder; `fieldsFor` drives which shape inputs are
+// shown. The `spikes`/`jitter` modifier inputs are shown for every type.
 const CURVE_TYPES = [
   { v: "sine",     label: "Sine" },
   { v: "cosine",   label: "Cosine" },
   { v: "constant", label: "Constant" },
-  { v: "spike",    label: "Spike" },
+  { v: "ramp",     label: "Ramp (linear trend)" },
+  { v: "triangle", label: "Triangle" },
+  { v: "square",   label: "Square (on/off)" },
+  { v: "spike",    label: "Spike (single pulse)" },
   { v: "day",      label: "Day (high first half)" },
   { v: "night",    label: "Night (high second half)" },
 ];
+// Modifier fields are appended to every curve editor (they stack on any shape).
+const MODIFIER_FIELDS = ["spikes", "spike_amp", "spike_width", "jitter", "seed"];
 function fieldsFor(type) {
   switch (type) {
     case "constant": return ["base"];
     case "sine":
-    case "cosine":   return ["base", "amplitude", "phase"];
-    case "spike":    return ["base", "amplitude", "pos", "width"];
+    case "cosine":
+    case "triangle": return ["base", "amplitude", "phase"];
+    case "ramp":     return ["base", "amplitude"];
+    case "square":
     case "day":
     case "night":    return ["base", "amplitude", "duty"];
+    case "spike":    return ["base", "amplitude", "pos", "width"];
     default:         return ["base", "amplitude"];
   }
 }
 
+// Deterministic PRNG — mirror of _hash01() in flow_ui_server.py. Math.imul(a,b)
+// >>> 0 reduces mod 2**32 exactly like Python's `& 0xFFFFFFFF`, so the spike
+// positions and jitter computed here match server playback bit-for-bit.
+const JITTER_BUCKETS = 120;
+function imul(a, b) { return Math.imul(a | 0, b | 0) >>> 0; }
+function hash01(seed, n) {
+  let x = (imul(seed, 0x9E3779B1) + imul(n, 0x85EBCA77)) >>> 0;
+  x ^= x >>> 16; x = imul(x, 0x7FEB352D);
+  x ^= x >>> 15; x = imul(x, 0x846CA68B);
+  x ^= x >>> 16;
+  return (x >>> 0) / 4294967296;
+}
+
 // Mirror of eval_curve() in flow_ui_server.py so the preview matches playback.
+// A curve is a base shape (`type`) plus two optional modifiers that stack on
+// any shape: `spikes` (random superimposed pulses) and `jitter` (noise band).
 function evalCurve(c, p) {
   const base = +c.base || 0, amp = +c.amplitude || 0, phase = +c.phase || 0;
   let ph = (p + phase) % 1; if (ph < 0) ph += 1;
@@ -318,6 +346,9 @@ function evalCurve(c, p) {
   switch (c.type) {
     case "sine":   v = base + amp * Math.sin(2 * Math.PI * ph); break;
     case "cosine": v = base + amp * Math.cos(2 * Math.PI * ph); break;
+    case "ramp":   v = base + amp * ph; break;
+    case "triangle": v = base + amp * (1 - Math.abs(2 * ph - 1)); break;
+    case "square": { const duty = c.duty == null ? 0.5 : +c.duty; v = ph < duty ? base + amp : base; break; }
     case "spike": {
       const pos = c.pos == null ? 0.5 : +c.pos, width = c.width == null ? 0.08 : +c.width;
       let d = Math.abs(ph - pos); d = Math.min(d, 1 - d);
@@ -326,6 +357,26 @@ function evalCurve(c, p) {
     case "day":   { const duty = c.duty == null ? 0.5 : +c.duty; v = ph < duty ? base + amp : base; break; }
     case "night": { const duty = c.duty == null ? 0.5 : +c.duty; v = ph >= (1 - duty) ? base + amp : base; break; }
     default:      v = base;   // "constant"
+  }
+  // Modifier: superimposed random spikes.
+  const nspk = (c.spikes | 0);
+  if (nspk > 0) {
+    const seed = (c.seed | 0) || 0;
+    const spkAmp = c.spike_amp == null ? (amp || base) : +c.spike_amp;
+    const spkW = c.spike_width == null ? 0.04 : +c.spike_width;
+    for (let k = 0; k < nspk; k++) {
+      const pos = hash01(seed, k);
+      let d = Math.abs(ph - pos); d = Math.min(d, 1 - d);
+      if (d < spkW / 2) v += spkAmp;
+    }
+  }
+  // Modifier: jitter / noise band (piecewise-constant per bucket).
+  const jit = +c.jitter || 0;
+  if (jit > 0) {
+    const seed = (c.seed | 0) || 0;
+    const bucket = Math.floor(ph * JITTER_BUCKETS);
+    const r = hash01(seed ^ 0x5BD1E995, bucket);
+    v *= 1 + jit * (r - 0.5) * 2;
   }
   return Math.max(0, Math.min(v, CONFIG.max_qps));
 }
@@ -382,12 +433,14 @@ async function init() {
   buildPresets();
   renderPresets();
   loadPreset(0);   // populate the builder with the first preset
+  loadSaved();     // pull any on-disk saved scenarios
 
   document.querySelectorAll(".nav button").forEach(b => {
     b.addEventListener("click", () => setView(b.dataset.view));
   });
   document.getElementById("scn-play").addEventListener("click", scnPlay);
   document.getElementById("scn-stop").addEventListener("click", scnStop);
+  document.getElementById("scn-save").addEventListener("click", saveScenario);
   document.getElementById("scn-period").addEventListener("input", e => {
     scnBuilder.period = +e.target.value || 60; activePreset = -1; renderPresets(); drawPreview("preview");
   });
@@ -677,11 +730,13 @@ function buildPresets() {
   PRESETS = [
     {
       name: "Perfect canonical multi-tenant",
-      desc: "Premium sine, standard cosine — their peaks are offset.",
+      desc: "Premium sine, standard cosine — proper inverses, so one troughs exactly when the other peaks (constant total load).",
       period: 60, loop: true,
       curves: {
+        // cos(2π·ph + π/2) = −sin(2π·ph), so phase 0.25 makes the standard
+        // cosine the exact inverse of the premium sine.
         "premium-tenant":  { type: "sine",   base: 0.5 * M, amplitude: 0.4 * M, phase: 0 },
-        "standard-tenant": { type: "cosine", base: 0.5 * M, amplitude: 0.4 * M, phase: 0 },
+        "standard-tenant": { type: "cosine", base: 0.5 * M, amplitude: 0.4 * M, phase: 0.25 },
       },
     },
     {
@@ -711,6 +766,33 @@ function buildPresets() {
         "standard-tenant": { type: "night", base: 0.1 * M, amplitude: 0.8 * M, duty: 0.5 },
       },
     },
+    {
+      name: "Noisy neighbor (spikes)",
+      desc: "Premium is a steady sine; standard fires random bursts that try to crowd it out.",
+      period: 45, loop: true,
+      curves: {
+        "premium-tenant":  { type: "sine", base: 0.45 * M, amplitude: 0.15 * M, phase: 0 },
+        "standard-tenant": { type: "constant", base: 0.2 * M, spikes: 6, spike_amp: 0.8 * M, spike_width: 0.04, seed: 7 },
+      },
+    },
+    {
+      name: "Ramping overload",
+      desc: "Both tiers ramp up past capacity each period — premium should hold while standard sheds.",
+      period: 60, loop: true,
+      curves: {
+        "premium-tenant":  { type: "ramp", base: 0.2 * M, amplitude: 0.6 * M },
+        "standard-tenant": { type: "ramp", base: 0.2 * M, amplitude: 0.8 * M },
+      },
+    },
+    {
+      name: "Jittery standard",
+      desc: "Premium is a smooth sine; standard is a sine buried in heavy noise.",
+      period: 60, loop: true,
+      curves: {
+        "premium-tenant":  { type: "sine", base: 0.5 * M, amplitude: 0.3 * M, phase: 0 },
+        "standard-tenant": { type: "sine", base: 0.5 * M, amplitude: 0.3 * M, phase: 0.5, jitter: 0.6, seed: 3 },
+      },
+    },
   ];
 }
 
@@ -729,17 +811,93 @@ function renderPresets() {
 function loadPreset(i) {
   const p = PRESETS[i];
   activePreset = i;
-  scnBuilder = { name: p.name, period: p.period, loop: p.loop !== false, curves: JSON.parse(JSON.stringify(p.curves)) };
-  document.getElementById("scn-name").value = p.name;
-  document.getElementById("scn-period").value = p.period;
-  document.getElementById("scn-loop").checked = p.loop !== false;
-  buildScnEditors();
+  loadScenarioInto(p);
   renderPresets();
+}
+
+// Shared loader: copy a {name, period, loop, curves} record into the builder.
+function loadScenarioInto(rec) {
+  scnBuilder = {
+    name: rec.name, period: rec.period || 60, loop: rec.loop !== false,
+    curves: JSON.parse(JSON.stringify(rec.curves)),
+  };
+  document.getElementById("scn-name").value = rec.name || "";
+  document.getElementById("scn-period").value = rec.period || 60;
+  document.getElementById("scn-loop").checked = rec.loop !== false;
+  buildScnEditors();
   drawPreview("preview");
 }
 
+// ----- saved scenarios (on-disk files) -----
+async function loadSaved() {
+  try {
+    const data = await fetch("/api/scenarios").then(r => r.json());
+    SAVED = Array.isArray(data.scenarios) ? data.scenarios : [];
+  } catch (e) { SAVED = []; }
+  renderSaved();
+}
+
+function renderSaved() {
+  const root = document.getElementById("saved");
+  const empty = document.getElementById("saved-empty");
+  if (!root) return;
+  if (empty) empty.style.display = SAVED.length ? "none" : "";
+  root.innerHTML = "";
+  SAVED.forEach(rec => {
+    const tiers = Object.keys(rec.curves || {}).length;
+    const row = document.createElement("div");
+    row.className = "preset";
+    row.innerHTML = `<div class="pname">${escapeHtml(rec.name || rec.slug)}`
+      + `<span class="scn-del" title="Delete" style="float:right;color:var(--muted);cursor:pointer;padding:0 2px;">✕</span></div>`
+      + `<div class="pdesc">period ${rec.period || 60}s · ${rec.loop !== false ? "loop" : "once"} · ${tiers} tier${tiers === 1 ? "" : "s"}</div>`;
+    // Clicking the row loads it into the builder…
+    row.addEventListener("click", () => {
+      activePreset = -1;
+      loadScenarioInto(rec);
+      renderPresets();
+    });
+    // …except the ✕, which deletes it (stop the click from also loading).
+    row.querySelector(".scn-del").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      deleteSaved(rec.slug, rec.name);
+    });
+    root.appendChild(row);
+  });
+}
+
+async function saveScenario() {
+  scnBuilder.name = document.getElementById("scn-name").value.trim();
+  scnBuilder.period = +document.getElementById("scn-period").value || 60;
+  scnBuilder.loop = document.getElementById("scn-loop").checked;
+  if (!scnBuilder.name) { alert("Give the scenario a name before saving."); return; }
+  try {
+    const res = await fetch("/api/scenarios/save", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: scnBuilder.name, period: scnBuilder.period, loop: scnBuilder.loop, curves: scnBuilder.curves }),
+    }).then(r => r.json());
+    if (res.error) { alert("Save failed: " + res.error); return; }
+    await loadSaved();
+  } catch (e) { alert("Save failed: " + e); }
+}
+
+async function deleteSaved(slug, name) {
+  if (!confirm(`Delete saved scenario "${name || slug}"?`)) return;
+  try {
+    await fetch("/api/scenarios/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug }),
+    });
+    await loadSaved();
+  } catch (e) { alert("Delete failed: " + e); }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
 function applyFieldVisibility(el, type) {
-  const show = new Set(fieldsFor(type));
+  // Shape fields depend on the type; modifier fields are always shown.
+  const show = new Set([...fieldsFor(type), ...MODIFIER_FIELDS]);
   el.querySelectorAll("[data-show]").forEach(r => { r.style.display = show.has(r.dataset.show) ? "" : "none"; });
 }
 
@@ -764,6 +922,11 @@ function buildScnEditors() {
       <div class="scn-row" data-show="pos"><label title="Where in the period the spike happens (0–1).">Spike at</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="pos" value="${num(c.pos == null ? 0.5 : c.pos)}" /></div>
       <div class="scn-row" data-show="width"><label title="Spike width as a fraction of the period.">Spike width</label><input type="number" min="0.01" max="1" step="0.01" data-fid="${fid}" data-k="width" value="${num(c.width == null ? 0.08 : c.width)}" /></div>
       <div class="scn-row" data-show="duty"><label title="Fraction of the period that is 'on' (high).">Duty</label><input type="number" min="0.05" max="0.95" step="0.05" data-fid="${fid}" data-k="duty" value="${num(c.duty == null ? 0.5 : c.duty)}" /></div>
+      <div class="scn-row" data-show="spikes" style="margin-top:10px;"><label title="Superimpose this many random pulses per period on top of the shape above. 0 = none.">Random spikes (#)</label><input type="number" min="0" max="50" step="1" data-fid="${fid}" data-k="spikes" value="${c.spikes | 0}" /></div>
+      <div class="scn-row" data-show="spike_amp"><label title="Height of each random spike, in q/s.">↳ spike q/s</label><input type="number" min="0" max="${mq}" step="0.1" data-fid="${fid}" data-k="spike_amp" value="${num(c.spike_amp == null ? 0.5 * mq : c.spike_amp)}" /></div>
+      <div class="scn-row" data-show="spike_width"><label title="Width of each random spike as a fraction of the period.">↳ spike width</label><input type="number" min="0.01" max="0.5" step="0.01" data-fid="${fid}" data-k="spike_width" value="${num(c.spike_width == null ? 0.04 : c.spike_width)}" /></div>
+      <div class="scn-row" data-show="jitter"><label title="Random noise band: multiplies the rate by 1±jitter, varying second to second. 0 = smooth.">Jitter (0–1)</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="jitter" value="${num(c.jitter || 0)}" /></div>
+      <div class="scn-row" data-show="seed"><label title="Seed for the random spikes & jitter. Same seed → same 'random' arrangement every replay. Change it to reshuffle.">Random seed</label><input type="number" min="0" max="99999" step="1" data-fid="${fid}" data-k="seed" value="${c.seed == null ? 1 : (c.seed | 0)}" /></div>
     `;
     root.appendChild(el);
     applyFieldVisibility(el, c.type);

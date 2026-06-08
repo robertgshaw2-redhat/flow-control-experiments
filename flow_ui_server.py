@@ -36,8 +36,10 @@ Usage:
 
 import argparse
 import asyncio
+import json
 import math
 import os
+import re
 import time
 from typing import Dict, List, Set
 
@@ -211,11 +213,42 @@ async def run_interactive_worker(
 # preview matches exactly what the server plays.
 
 
+# --- Deterministic PRNG ------------------------------------------------------
+# Random-looking but fully reproducible: spike positions and jitter are derived
+# from a per-curve integer ``seed`` via this hash, so (a) the browser preview
+# matches server playback bit-for-bit, and (b) a saved scenario replays the
+# exact same "random" arrangement every time. ``_hash01`` is mirrored verbatim
+# in flow_ui.html as ``hash01``; keep the two in lockstep.
+#
+# All arithmetic is unsigned 32-bit. ``& 0xFFFFFFFF`` here reduces mod 2**32
+# exactly as ``Math.imul(a, b) >>> 0`` does in JS, so the two implementations
+# produce identical sequences.
+JITTER_BUCKETS = 120  # noise is piecewise-constant over this many slots / period
+
+
+def _imul(a: int, b: int) -> int:
+    return ((a & 0xFFFFFFFF) * (b & 0xFFFFFFFF)) & 0xFFFFFFFF
+
+
+def _hash01(seed: int, n: int) -> float:
+    """Hash (seed, n) -> a deterministic float in [0, 1)."""
+    x = (_imul(seed, 0x9E3779B1) + _imul(n, 0x85EBCA77)) & 0xFFFFFFFF
+    x ^= x >> 16
+    x = _imul(x, 0x7FEB352D)
+    x ^= x >> 15
+    x = _imul(x, 0x846CA68B)
+    x ^= x >> 16
+    return (x & 0xFFFFFFFF) / 4294967296.0
+
+
 def eval_curve(curve: dict, p: float, max_val: float) -> float:
     """Evaluate one traffic curve at normalized phase ``p`` in [0, 1).
 
-    Returns a QPS value clamped to [0, max_val]. Unknown fields are ignored and
-    sensible defaults are applied so partially-specified curves still work.
+    A curve has a *base shape* (set by ``type``) and two optional *modifiers*
+    that stack on top of any shape: ``spikes`` (superimposed random pulses) and
+    ``jitter`` (a noise band). Returns a QPS value clamped to [0, max_val].
+    Unknown fields are ignored and sensible defaults are applied so
+    partially-specified curves still work.
     """
     ctype = curve.get("type", "constant")
     base = float(curve.get("base", 0.0) or 0.0)
@@ -227,6 +260,16 @@ def eval_curve(curve: dict, p: float, max_val: float) -> float:
         v = base + amp * math.sin(2 * math.pi * ph)
     elif ctype == "cosine":
         v = base + amp * math.cos(2 * math.pi * ph)
+    elif ctype == "ramp":
+        # Linear trend from ``base`` up to ``base + amp`` across the period.
+        v = base + amp * ph
+    elif ctype == "triangle":
+        # Rise to the peak at mid-period, then fall symmetrically back.
+        v = base + amp * (1.0 - abs(2.0 * ph - 1.0))
+    elif ctype == "square":
+        # On/off, phase-shiftable: high for the first ``duty`` of the period.
+        duty = float(curve.get("duty", 0.5) or 0.0)
+        v = base + amp if ph < duty else base
     elif ctype == "spike":
         pos = float(curve.get("pos", 0.5) or 0.0)
         width = float(curve.get("width", 0.08) or 0.0)
@@ -245,6 +288,33 @@ def eval_curve(curve: dict, p: float, max_val: float) -> float:
         v = base + amp if ph >= (1.0 - duty) else base
     else:  # "constant" and any unknown type
         v = base
+
+    # --- Modifier: superimposed random spikes --------------------------------
+    # ``spikes`` pulses per period at deterministic-random positions, each of
+    # height ``spike_amp`` and fractional ``spike_width``. Lets a steady or
+    # smooth flow read as a bursty "noisy neighbor".
+    nspk = int(curve.get("spikes", 0) or 0)
+    if nspk > 0:
+        seed = int(curve.get("seed", 1) or 0)
+        spk_amp = float(curve.get("spike_amp", amp or base) or 0.0)
+        spk_w = float(curve.get("spike_width", 0.04) or 0.0)
+        for k in range(nspk):
+            pos = _hash01(seed, k)
+            d = abs(ph - pos)
+            d = min(d, 1.0 - d)
+            if d < spk_w / 2.0:
+                v += spk_amp
+
+    # --- Modifier: jitter / noise band ---------------------------------------
+    # Multiplies the value by a piecewise-constant noise factor in
+    # [1-jit, 1+jit]. Piecewise-constant (per bucket) so it reads as realistic
+    # second-to-second variation rather than per-tick flicker.
+    jit = float(curve.get("jitter", 0.0) or 0.0)
+    if jit > 0:
+        seed = int(curve.get("seed", 1) or 0)
+        bucket = int(ph * JITTER_BUCKETS)
+        r = _hash01(seed ^ 0x5BD1E995, bucket)
+        v *= 1.0 + jit * (r - 0.5) * 2.0
 
     return max(0.0, min(v, max_val))
 
@@ -525,6 +595,128 @@ async def handle_reset(request: web.Request) -> web.Response:
 
 
 # ==============================================================================
+# 4b. SAVED SCENARIOS (on-disk JSON "trace" files)
+# ==============================================================================
+# Scenarios are persisted one-per-file under ``scenarios/`` next to this script
+# so they can be version-controlled, shared, and replayed exactly. Each file is
+# the same JSON shape the scenario player and builder use:
+#   {"name": str, "period": float, "loop": bool,
+#    "curves": {fairness_id: {"type": ..., "base": ..., ...}}}
+# QPS values are stored absolute (not as fractions of --max-qps) so a saved
+# scenario plays back identically regardless of the server's slider bounds.
+
+SCN_DIR = os.path.join(HERE, "scenarios")
+
+
+def _slug(name: str) -> str:
+    """Filesystem-safe slug for a scenario name (also the file stem)."""
+    s = re.sub(r"[^a-z0-9]+", "-", str(name).strip().lower()).strip("-")
+    return (s or "scenario")[:64]
+
+
+def _scn_path(slug: str) -> str:
+    """Resolve a slug to a path inside SCN_DIR, refusing traversal."""
+    safe = _slug(slug)
+    path = os.path.abspath(os.path.join(SCN_DIR, safe + ".json"))
+    if os.path.dirname(path) != os.path.abspath(SCN_DIR):
+        raise ValueError("invalid scenario name")
+    return path
+
+
+def _load_scn_files() -> List[dict]:
+    """Read every saved scenario, newest first. Skips unreadable/invalid files."""
+    out: List[dict] = []
+    try:
+        names = os.listdir(SCN_DIR)
+    except FileNotFoundError:
+        return out
+    for fn in names:
+        if not fn.endswith(".json"):
+            continue
+        path = os.path.join(SCN_DIR, fn)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or not isinstance(data.get("curves"), dict):
+                continue
+            data["slug"] = fn[:-5]
+            try:
+                data["mtime"] = os.path.getmtime(path)
+            except OSError:
+                data["mtime"] = 0.0
+            out.append(data)
+        except (OSError, ValueError):
+            continue
+    out.sort(key=lambda d: d.get("mtime", 0.0), reverse=True)
+    return out
+
+
+async def handle_scenarios_list(request: web.Request) -> web.Response:
+    """List saved scenarios (full definitions, so the UI can load without a 2nd call)."""
+    return web.json_response({"scenarios": _load_scn_files()})
+
+
+async def handle_scenarios_save(request: web.Request) -> web.Response:
+    """Persist a scenario to ``scenarios/<slug>.json``.
+
+    Body matches the player/builder shape: {name, period, loop, curves}. The
+    name's slug is the filename, so saving under an existing name overwrites it.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    name = str(body.get("name", "")).strip()
+    if not name:
+        return web.json_response({"error": "name is required"}, status=400)
+    curves = body.get("curves")
+    if not isinstance(curves, dict) or not curves:
+        return web.json_response({"error": "curves must be a non-empty object"}, status=400)
+
+    try:
+        period = float(body.get("period", 60.0))
+    except (TypeError, ValueError):
+        period = 60.0
+    period = max(1.0, min(period, 3600.0))
+
+    record = {
+        "name": name,
+        "period": period,
+        "loop": bool(body.get("loop", True)),
+        "curves": curves,
+    }
+    try:
+        os.makedirs(SCN_DIR, exist_ok=True)
+        path = _scn_path(name)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2)
+    except (OSError, ValueError) as e:
+        return web.json_response({"error": f"could not save: {e}"}, status=400)
+
+    return web.json_response({"ok": True, "slug": _slug(name), "name": name})
+
+
+async def handle_scenarios_delete(request: web.Request) -> web.Response:
+    """Delete a saved scenario by slug."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    slug = body.get("slug") or body.get("name")
+    if not slug:
+        return web.json_response({"error": "slug is required"}, status=400)
+    try:
+        path = _scn_path(slug)
+        os.remove(path)
+    except FileNotFoundError:
+        return web.json_response({"error": "not found"}, status=404)
+    except (OSError, ValueError) as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True})
+
+
+# ==============================================================================
 # 5. LIFECYCLE
 # ==============================================================================
 
@@ -638,6 +830,9 @@ def main() -> None:
     app.router.add_post("/api/mode", handle_set_mode)
     app.router.add_post("/api/scenario/start", handle_scenario_start)
     app.router.add_post("/api/scenario/stop", handle_scenario_stop)
+    app.router.add_get("/api/scenarios", handle_scenarios_list)
+    app.router.add_post("/api/scenarios/save", handle_scenarios_save)
+    app.router.add_post("/api/scenarios/delete", handle_scenarios_delete)
     app.router.add_post("/api/reset", handle_reset)
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
