@@ -120,6 +120,27 @@
   }
   .scn-row input[type=text] { width: auto; flex: 1; }
   .scn-row select { width: 150px; }
+  /* "pulses" type — explicit multi-spike timeline editor */
+  .scn-pulses { flex-direction: column; align-items: stretch; gap: 7px; }
+  .scn-pulses > label { color: var(--muted); font-size: 12px; }
+  .pulse-list { display: flex; flex-direction: column; gap: 5px; }
+  .pulse-empty { color: var(--muted); font-size: 11px; font-style: italic; }
+  .pulse-row { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  .pulse-row .pn { width: 26px; font-variant-numeric: tabular-nums; }
+  .pulse-row label { color: var(--muted); }
+  .pulse-row input[type=number] {
+    width: 56px; background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+    border-radius: 6px; padding: 3px 6px; font: inherit; font-variant-numeric: tabular-nums;
+  }
+  .pulse-row .u { color: var(--muted); font-size: 11px; }
+  .pulse-row button { padding: 2px 7px; margin-left: auto; }
+  .pulse-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 2px; }
+  .pulse-tools button { padding: 4px 9px; font-size: 12px; }
+  .pulse-gen { color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+  .pulse-tools .pulse-n {
+    width: 48px; background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+    border-radius: 6px; padding: 3px 6px; font: inherit; font-variant-numeric: tabular-nums;
+  }
   .play-row { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
   .play-row button.primary { background: var(--premium); color: #04121f; font-weight: 700; border-color: var(--premium); }
   .play-row button.primary:hover { filter: brightness(1.05); border-color: var(--premium); }
@@ -403,6 +424,7 @@ const CURVE_TYPES = [
   { v: "spike",    label: "Spike (single pulse)" },
   { v: "day",      label: "Day (high first half)" },
   { v: "night",    label: "Night (high second half)" },
+  { v: "pulses",   label: "Pulses (multi-spike timeline)" },
 ];
 // Modifier fields are appended to every curve editor (they stack on any shape).
 const MODIFIER_FIELDS = ["spikes", "spike_amp", "spike_width", "jitter", "seed"];
@@ -416,6 +438,7 @@ function fieldsFor(type) {
     case "day":
     case "night":    return ["base", "amplitude", "duty"];
     case "spike":    return ["base", "amplitude", "pos", "width"];
+    case "pulses":   return ["base", "pulses"];
     default:         return ["base", "amplitude"];
   }
 }
@@ -452,6 +475,19 @@ function evalCurve(c, p) {
     }
     case "day":   { const duty = c.duty == null ? 0.5 : +c.duty; v = ph < duty ? base + amp : base; break; }
     case "night": { const duty = c.duty == null ? 0.5 : +c.duty; v = ph >= (1 - duty) ? base + amp : base; break; }
+    case "pulses": {
+      // Explicit multi-spike timeline: rectangular spikes at `at` (s) for `dur`
+      // (s), height `amp` (q/s). Mirror of the "pulses" branch in eval_curve().
+      const per = +c.period || 60, t = ph * per;
+      v = base;
+      for (const pl of (c.pulses || [])) {
+        const dur = +pl.dur || 0;
+        if (dur <= 0) continue;
+        let local = ((t - (+pl.at || 0)) % per + per) % per;   // normalize to [0, per)
+        if (local < dur) v += +pl.amp || 0;
+      }
+      break;
+    }
     default:      v = base;   // "constant"
   }
   // Modifier: superimposed random spikes.
@@ -1091,9 +1127,41 @@ function escapeHtml(s) {
 }
 
 function applyFieldVisibility(el, type) {
-  // Shape fields depend on the type; modifier fields are always shown.
-  const show = new Set([...fieldsFor(type), ...MODIFIER_FIELDS]);
+  // Shape fields depend on the type; modifier fields are always shown — except
+  // the random-spike modifier, which is redundant (and confusing) on the
+  // "pulses" type that already places explicit spikes. Jitter/seed still stack.
+  const mods = type === "pulses" ? ["jitter", "seed"] : MODIFIER_FIELDS;
+  const show = new Set([...fieldsFor(type), ...mods]);
   el.querySelectorAll("[data-show]").forEach(r => { r.style.display = show.has(r.dataset.show) ? "" : "none"; });
+}
+
+// ----- "pulses" type: explicit multi-spike timeline -----
+// A pulse is {at, dur, amp} in seconds / q/s. These helpers seed and render the
+// per-spike rows; eval happens in evalCurve()'s "pulses" branch.
+function defaultPulse(c) {
+  const per = effPeriod(c), mq = CONFIG.max_qps;
+  const last = (c.pulses && c.pulses.length) ? c.pulses[c.pulses.length - 1] : null;
+  // Drop the new spike just after the previous one, else a little into the period.
+  const at = last ? Math.min(per, (+last.at || 0) + (+last.dur || 0) + per * 0.05) : per * 0.1;
+  return { at: num(at), dur: num(per / 8), amp: num(0.5 * mq) };
+}
+function genEvenPulses(c, n) {
+  const per = effPeriod(c), mq = CONFIG.max_qps, slot = per / n;
+  const out = [];
+  for (let i = 0; i < n; i++) out.push({ at: num(i * slot), dur: num(slot * 0.5), amp: num(0.5 * mq) });
+  return out;
+}
+function pulseRowsHTML(fid, c, mq) {
+  const pulses = c.pulses || [];
+  if (!pulses.length) return `<div class="pulse-empty">No spikes yet — add one or generate N evenly-spaced.</div>`;
+  return pulses.map((pl, i) => `
+    <div class="pulse-row" data-fid="${fid}" data-i="${i}">
+      <span class="pn">#${i + 1}</span>
+      <label>at</label><input type="number" min="0" step="0.5" data-pk="at" value="${num(pl.at)}" /><span class="u">s</span>
+      <label>for</label><input type="number" min="0.1" step="0.5" data-pk="dur" value="${num(pl.dur)}" /><span class="u">s</span>
+      <input type="number" min="0" max="${mq}" step="0.1" data-pk="amp" value="${num(pl.amp)}" /><span class="u">q/s</span>
+      <button type="button" data-act="pulse-del" data-fid="${fid}" data-i="${i}" title="Remove this spike">✕</button>
+    </div>`).join("");
 }
 
 function buildScnEditors() {
@@ -1123,15 +1191,58 @@ function buildScnEditors() {
       <div class="scn-row" data-show="spike_width"><label title="Width of each random spike as a fraction of the period.">↳ spike width</label><input type="number" min="0.01" max="0.5" step="0.01" data-fid="${fid}" data-k="spike_width" value="${num(c.spike_width == null ? 0.04 : c.spike_width)}" /></div>
       <div class="scn-row" data-show="jitter"><label title="Random noise band: multiplies the rate by 1±jitter, varying second to second. 0 = smooth.">Jitter (0–1)</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="jitter" value="${num(c.jitter || 0)}" /></div>
       <div class="scn-row" data-show="seed"><label title="Seed for the random spikes & jitter. Same seed → same 'random' arrangement every replay. Change it to reshuffle.">Random seed</label><input type="number" min="0" max="99999" step="1" data-fid="${fid}" data-k="seed" value="${c.seed == null ? 1 : (c.seed | 0)}" /></div>
+      <div class="scn-row scn-pulses" data-show="pulses">
+        <label title="Script N independent rectangular spikes over the period. Each has its own start time, duration (both in seconds) and height (q/s). Spikes stack on top of Base q/s.">Spike timeline</label>
+        <div class="pulse-list" data-fid="${fid}">${pulseRowsHTML(fid, c, mq)}</div>
+        <div class="pulse-tools">
+          <button type="button" data-act="pulse-add" data-fid="${fid}">+ Add spike</button>
+          <span class="pulse-gen">N <input type="number" class="pulse-n" min="1" max="50" step="1" value="${(c.pulses && c.pulses.length) || 5}" data-fid="${fid}" /><button type="button" data-act="pulse-gen" data-fid="${fid}">Generate evenly</button></span>
+        </div>
+      </div>
     `;
     root.appendChild(el);
     applyFieldVisibility(el, c.type);
     el.querySelectorAll("[data-k]").forEach(inp => {
       inp.addEventListener("input", () => {
-        const k = inp.dataset.k, f = inp.dataset.fid;
-        scnBuilder.curves[f][k] = (k === "type") ? inp.value : (inp.value === "" ? 0 : +inp.value);
-        if (k === "type") applyFieldVisibility(el, inp.value);
+        const k = inp.dataset.k, f = inp.dataset.fid, cur = scnBuilder.curves[f];
+        cur[k] = (k === "type") ? inp.value : (inp.value === "" ? 0 : +inp.value);
+        if (k === "type") {
+          // Seed a few spikes the first time you switch to "pulses" so the
+          // preview isn't empty, then re-render so the timeline editor appears.
+          if (inp.value === "pulses" && (!cur.pulses || !cur.pulses.length)) cur.pulses = genEvenPulses(cur, 3);
+          activePreset = -1; renderPresets();
+          buildScnEditors();
+          drawPreview("preview");
+          return;
+        }
         activePreset = -1; renderPresets();
+        drawPreview("preview");
+      });
+    });
+    // Per-spike value edits (at / dur / amp) — mutate in place, no full rebuild.
+    el.querySelectorAll(".pulse-row [data-pk]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        const row = inp.closest(".pulse-row"), cur = scnBuilder.curves[row.dataset.fid];
+        if (!cur.pulses || !cur.pulses[+row.dataset.i]) return;
+        cur.pulses[+row.dataset.i][inp.dataset.pk] = inp.value === "" ? 0 : +inp.value;
+        activePreset = -1; renderPresets();
+        drawPreview("preview");
+      });
+    });
+    // Structural spike edits (add / delete / generate) — rebuild the editor.
+    el.querySelectorAll("[data-act]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const cur = scnBuilder.curves[btn.dataset.fid];
+        if (!cur.pulses) cur.pulses = [];
+        const act = btn.dataset.act;
+        if (act === "pulse-add") cur.pulses.push(defaultPulse(cur));
+        else if (act === "pulse-del") cur.pulses.splice(+btn.dataset.i, 1);
+        else if (act === "pulse-gen") {
+          const n = Math.max(1, Math.min(50, (+el.querySelector(`.pulse-n[data-fid="${btn.dataset.fid}"]`).value) || 5));
+          cur.pulses = genEvenPulses(cur, n);
+        } else return;
+        activePreset = -1; renderPresets();
+        buildScnEditors();
         drawPreview("preview");
       });
     });

@@ -341,6 +341,28 @@ def eval_curve(curve: dict, p: float, max_val: float) -> float:
         # Mirror of "day": low first, high for the trailing `duty` fraction.
         duty = float(curve.get("duty", 0.5) or 0.0)
         v = base + amp if ph >= (1.0 - duty) else base
+    elif ctype == "pulses":
+        # Explicit multi-spike timeline. ``pulses`` is a list of rectangular
+        # spikes, each with its own start ``at`` and duration ``dur`` (both in
+        # SECONDS within the period) and height ``amp`` (q/s, on top of ``base``).
+        # Lets you script N independent spikes — ramp traffic up and back down a
+        # set number of times — instead of the random ``spikes`` modifier where
+        # every pulse is randomly placed and identically sized.
+        per = float(curve.get("period", 0.0) or 0.0) or 60.0
+        t = ph * per  # seconds elapsed into the current period
+        v = base
+        for pl in (curve.get("pulses") or []):
+            dur = float(pl.get("dur", 0.0) or 0.0)
+            if dur <= 0:
+                continue
+            at = float(pl.get("at", 0.0) or 0.0)
+            # Seconds since this pulse's start, wrapped into the period so a pulse
+            # whose tail runs past the period boundary resumes at the start. The
+            # double-mod normalizes to [0, per) identically to the JS mirror,
+            # whose ``%`` would otherwise return a negative remainder.
+            local = ((t - at) % per + per) % per
+            if local < dur:
+                v += float(pl.get("amp", 0.0) or 0.0)
     else:  # "constant" and any unknown type
         v = base
 
