@@ -332,18 +332,33 @@ async def run_scenario_driver(control: dict, max_qps: float, stop_event: asyncio
         if scn["playing"]:
             elapsed = time.monotonic() - scn["start"]
             period = max(1.0, float(scn["period"]))
-            if not scn["loop"] and elapsed >= period:
+            curves = scn["curves"]
+
+            # Each tenant cycles on its own period (curve["period"]), falling back
+            # to the scenario default. The playhead/non-loop window spans the
+            # longest period so a faster tenant repeats inside it. Mirrored in the
+            # browser's effPeriod()/windowPeriod().
+            def eff_period(curve: dict) -> float:
+                cp = float(curve.get("period") or 0.0)
+                return min(max(1.0, cp if cp > 0 else period), 3600.0)
+
+            window = period
+            for curve in curves.values():
+                window = max(window, eff_period(curve))
+
+            if not scn["loop"] and elapsed >= window:
                 for fid in rates:
                     rates[fid] = 0.0
                 scn["playing"] = False
-                scn["elapsed"] = period
+                scn["elapsed"] = window
                 scn["phase"] = 1.0
             else:
-                p = (elapsed % period) / period if scn["loop"] else min(elapsed / period, 1.0)
                 scn["elapsed"] = elapsed
-                scn["phase"] = p
-                for fid, curve in scn["curves"].items():
+                scn["phase"] = (elapsed % window) / window if scn["loop"] else min(elapsed / window, 1.0)
+                for fid, curve in curves.items():
                     if fid in rates:
+                        eff = eff_period(curve)
+                        p = (elapsed % eff) / eff if scn["loop"] else min(elapsed / eff, 1.0)
                         rates[fid] = eval_curve(curve, p, max_qps)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=TICK_SEC)
@@ -680,9 +695,16 @@ async def handle_scenarios_save(request: web.Request) -> web.Response:
         period = 60.0
     period = max(1.0, min(period, 3600.0))
 
+    try:
+        window = float(body.get("window", period))
+    except (TypeError, ValueError):
+        window = period
+    window = max(10.0, min(window, 300.0))
+
     record = {
         "name": name,
         "period": period,
+        "window": window,
         "loop": bool(body.get("loop", True)),
         "curves": curves,
     }

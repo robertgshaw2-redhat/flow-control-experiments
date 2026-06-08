@@ -215,7 +215,7 @@
         <div class="presets" id="saved"></div>
         <h2 style="margin-top:18px;">Builder</h2>
         <div class="scn-row"><label>Name</label><input type="text" id="scn-name" placeholder="My scenario" /></div>
-        <div class="scn-row"><label title="Length of one full cycle. The plan repeats every period.">Period (s)</label><input type="number" id="scn-period" min="2" max="3600" step="1" value="60" /></div>
+        <div class="scn-row"><label title="Time span shown in the charts on the right. The traffic plan and the measured latency share this window, so you can line them up in time. Each tenant's own cycle length is set per-tenant below.">Window (s)</label><input type="number" id="scn-window" min="10" max="300" step="5" value="60" /></div>
         <div class="scn-row"><label title="Repeat the curve forever (uncheck to play it once and stop).">Loop continuously</label><input type="checkbox" id="scn-loop" checked /></div>
         <div id="scn-editors"></div>
         <div class="play-row">
@@ -233,7 +233,7 @@
         <div class="legend">
           <span><i style="background:var(--premium)"></i>premium-tenant</span>
           <span><i style="background:var(--standard)"></i>standard-tenant</span>
-          <span style="margin-left:auto;color:var(--muted)">target q/s over one period</span>
+          <span style="margin-left:auto;color:var(--muted)">target q/s · now at right</span>
         </div>
 
         <h2 style="margin-top:20px;">Measured latency</h2>
@@ -282,11 +282,12 @@ const MODES = {
 };
 // Per-tenant rolling history of { t (ms), value } for the selected metric is
 // kept separately per metric key so switching metrics keeps prior data.
-const history = {};      // fid -> [ {t, p95_ttft, med_ttft, max_ttft, p95_total, med_total, max_total} ]
+const history = {};      // fid -> [ {t, p95_ttft, med_ttft, max_ttft, p95_total, med_total, max_total, target_qps, qps} ]
 let lastOk = 0;
 
 // ----- Scenarios view state -----
 let activeView = "live";                       // "live" | "scenarios"
+let scnWindow = 60;                            // seconds shown in the scenarios dashboard (both charts)
 let scnState = { playing: false, phase: 0, elapsed: 0, period: 60, loop: true, name: "" };
 let scnBuilder = null;                          // { name, period, loop, curves: {fid: curve} }
 let PRESETS = [];
@@ -441,8 +442,9 @@ async function init() {
   document.getElementById("scn-play").addEventListener("click", scnPlay);
   document.getElementById("scn-stop").addEventListener("click", scnStop);
   document.getElementById("scn-save").addEventListener("click", saveScenario);
-  document.getElementById("scn-period").addEventListener("input", e => {
-    scnBuilder.period = +e.target.value || 60; activePreset = -1; renderPresets(); drawPreview("preview");
+  document.getElementById("scn-window").addEventListener("input", e => {
+    scnWindow = Math.max(10, Math.min(+e.target.value || 60, 300));
+    draw();   // re-scale both the traffic plan and the measured-latency chart
   });
   document.getElementById("scn-loop").addEventListener("change", e => { scnBuilder.loop = e.target.checked; });
   document.getElementById("scn-name").addEventListener("input", () => { activePreset = -1; renderPresets(); });
@@ -579,6 +581,7 @@ function onStats(data) {
       t: now,
       p95_ttft: t.p95_ttft, med_ttft: t.med_ttft, max_ttft: t.max_ttft,
       p95_total: t.p95_total, med_total: t.med_total, max_total: t.max_total,
+      target_qps: t.target_qps, qps: t.qps,
     });
     // prune to the largest span we might show (5m) plus a little slack
     const cutoff = now - 320000;
@@ -627,14 +630,15 @@ function renderCards(data, rootId) {
 function draw() {
   if (!CONFIG) return;
   if (activeView === "scenarios") {
-    drawLatency("scn-latency", 240, "scn-y-label");
+    drawLatency("scn-latency", 240, "scn-y-label", scnWindow);
     drawPreview("preview");
   } else {
-    drawLatency("chart", 340, "y-label");
+    drawLatency("chart", 340, "y-label", chartSpan);
   }
 }
 
-function drawLatency(canvasId, cssH, yLabelId) {
+function drawLatency(canvasId, cssH, yLabelId, span) {
+  span = span || chartSpan;
   const canvas = document.getElementById(canvasId);
   if (!canvas || !CONFIG) return;
   const dpr = window.devicePixelRatio || 1;
@@ -647,7 +651,7 @@ function drawLatency(canvasId, cssH, yLabelId) {
   const padL = 52, padR = 12, padT = 12, padB = 24;
   const W = cssW - padL - padR, H = cssH - padT - padB;
   const now = Date.now();
-  const tMin = now - chartSpan * 1000, tMax = now;
+  const tMin = now - span * 1000, tMax = now;
 
   const yLabelEl = document.getElementById(yLabelId);
   if (yLabelEl) yLabelEl.textContent = METRIC_LABELS[metric];
@@ -673,11 +677,11 @@ function drawLatency(canvasId, cssH, yLabelId) {
     ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + W, y); ctx.stroke(); ctx.globalAlpha = 1;
     ctx.textAlign = "right"; ctx.fillText(val.toFixed(val < 10 ? 1 : 0) + "s", padL - 8, y);
   }
-  // x labels (every ~10s relative)
+  // x labels (relative seconds, now on the right)
   ctx.textAlign = "center"; ctx.textBaseline = "top";
-  const step = chartSpan <= 60 ? 10 : chartSpan <= 120 ? 20 : 60;
-  for (let s = 0; s <= chartSpan; s += step) {
-    const x = padL + W * (1 - s / chartSpan);
+  const step = spanStep(span);
+  for (let s = 0; s <= span; s += step) {
+    const x = padL + W * (1 - s / span);
     ctx.fillText("-" + s + "s", x, padT + H + 6);
   }
 
@@ -815,14 +819,22 @@ function loadPreset(i) {
   renderPresets();
 }
 
-// Shared loader: copy a {name, period, loop, curves} record into the builder.
+// Shared loader: copy a {name, period, loop, curves, window?} record into the
+// builder. Each tenant's cycle length is materialized onto its own curve, so the
+// scenario-level `period` is only a fallback; the displayed window is separate.
 function loadScenarioInto(rec) {
-  scnBuilder = {
-    name: rec.name, period: rec.period || 60, loop: rec.loop !== false,
-    curves: JSON.parse(JSON.stringify(rec.curves)),
-  };
+  const base = +rec.period || 60;
+  const curves = JSON.parse(JSON.stringify(rec.curves));
+  let maxPeriod = base;
+  for (const fid in curves) {
+    curves[fid].period = +curves[fid].period || base;
+    maxPeriod = Math.max(maxPeriod, curves[fid].period);
+  }
+  scnBuilder = { name: rec.name, period: base, loop: rec.loop !== false, curves };
+  // Default the dashboard window to one full cycle of the slowest tenant.
+  scnWindow = Math.max(10, Math.min(+rec.window || maxPeriod, 300));
   document.getElementById("scn-name").value = rec.name || "";
-  document.getElementById("scn-period").value = rec.period || 60;
+  document.getElementById("scn-window").value = scnWindow;
   document.getElementById("scn-loop").checked = rec.loop !== false;
   buildScnEditors();
   drawPreview("preview");
@@ -849,7 +861,7 @@ function renderSaved() {
     row.className = "preset";
     row.innerHTML = `<div class="pname">${escapeHtml(rec.name || rec.slug)}`
       + `<span class="scn-del" title="Delete" style="float:right;color:var(--muted);cursor:pointer;padding:0 2px;">✕</span></div>`
-      + `<div class="pdesc">period ${rec.period || 60}s · ${rec.loop !== false ? "loop" : "once"} · ${tiers} tier${tiers === 1 ? "" : "s"}</div>`;
+      + `<div class="pdesc">window ${rec.window || rec.period || 60}s · ${rec.loop !== false ? "loop" : "once"} · ${tiers} tier${tiers === 1 ? "" : "s"}</div>`;
     // Clicking the row loads it into the builder…
     row.addEventListener("click", () => {
       activePreset = -1;
@@ -867,13 +879,12 @@ function renderSaved() {
 
 async function saveScenario() {
   scnBuilder.name = document.getElementById("scn-name").value.trim();
-  scnBuilder.period = +document.getElementById("scn-period").value || 60;
   scnBuilder.loop = document.getElementById("scn-loop").checked;
   if (!scnBuilder.name) { alert("Give the scenario a name before saving."); return; }
   try {
     const res = await fetch("/api/scenarios/save", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: scnBuilder.name, period: scnBuilder.period, loop: scnBuilder.loop, curves: scnBuilder.curves }),
+      body: JSON.stringify({ name: scnBuilder.name, period: scnBuilder.period, loop: scnBuilder.loop, window: scnWindow, curves: scnBuilder.curves }),
     }).then(r => r.json());
     if (res.error) { alert("Save failed: " + res.error); return; }
     await loadSaved();
@@ -907,13 +918,14 @@ function buildScnEditors() {
   const tenants = [...CONFIG.tenants].sort((a, b) => b.priority - a.priority);
   for (const t of tenants) {
     const fid = t.fairness_id;
-    const c = scnBuilder.curves[fid] || (scnBuilder.curves[fid] = { type: "constant", base: 0.5 * CONFIG.max_qps, amplitude: 0.3 * CONFIG.max_qps });
+    const c = scnBuilder.curves[fid] || (scnBuilder.curves[fid] = { type: "constant", base: 0.5 * CONFIG.max_qps, amplitude: 0.3 * CONFIG.max_qps, period: scnBuilder.period || 60 });
     const color = TENANT_COLORS[fid] || getCSS("--accent");
     const el = document.createElement("div");
     el.className = "scn-tenant";
     const mq = CONFIG.max_qps;
     el.innerHTML = `
       <div class="scn-row"><div><span class="dot" style="background:${color}"></span><span class="name ${colorClass(fid)}">${fid}</span></div></div>
+      <div class="scn-row"><label title="Length of this tenant's cycle. Its curve repeats every period (independent of the other tenants).">Period (s)</label><input type="number" min="2" max="3600" step="1" data-fid="${fid}" data-k="period" value="${num(c.period || scnBuilder.period)}" /></div>
       <div class="scn-row"><label>Curve</label>
         <select data-fid="${fid}" data-k="type">${CURVE_TYPES.map(ct => `<option value="${ct.v}" ${c.type === ct.v ? "selected" : ""}>${ct.label}</option>`).join("")}</select></div>
       <div class="scn-row" data-show="base"><label>Base q/s</label><input type="number" min="0" max="${mq}" step="0.1" data-fid="${fid}" data-k="base" value="${num(c.base)}" /></div>
@@ -956,7 +968,6 @@ function updateScnStatus() {
 
 async function scnPlay() {
   scnBuilder.name = document.getElementById("scn-name").value;
-  scnBuilder.period = +document.getElementById("scn-period").value || 60;
   scnBuilder.loop = document.getElementById("scn-loop").checked;
   try {
     await fetch("/api/scenario/start", {
@@ -970,7 +981,22 @@ async function scnStop() {
   try { await fetch("/api/scenario/stop", { method: "POST" }); } catch (e) {}
 }
 
-// Plot each tenant's traffic curve over one full period, plus a playhead.
+// A tenant's effective cycle length is its own `period` if set, else the
+// scenario fallback. Mirrored in run_scenario_driver().
+function effPeriod(c) { const p = +(c && c.period) || 0; return p > 0 ? p : (scnBuilder.period || 60); }
+
+// Pick an x-axis label step that keeps a span to <= ~8 ticks. Shared by the
+// traffic plan and the latency chart so the two line up.
+function spanStep(span) {
+  const cands = [5, 10, 15, 20, 30, 60, 120, 300, 600];
+  for (const c of cands) if (span / c <= 8) return c;
+  return Math.ceil(span / 8 / 60) * 60;
+}
+
+// Traffic plan. While a scenario plays, plot the *actual* target q/s each tenant
+// is being driven at over the same trailing window (and time axis) as the
+// measured-latency chart, so the two charts line up moment-for-moment. While
+// stopped, fall back to a design preview of the planned curves over the window.
 function drawPreview(canvasId) {
   const canvas = document.getElementById(canvasId);
   if (!canvas || !CONFIG || !scnBuilder) return;
@@ -985,10 +1011,22 @@ function drawPreview(canvasId) {
   const padL = 44, padR = 12, padT = 12, padB = 22;
   const W = cssW - padL - padR, H = cssH - padT - padB;
   const N = 240;
+  const span = scnWindow;
+  const live = scnState.playing;
+  const now = Date.now(), tMin = now - span * 1000;
+
+  // Phase of a given tenant at fraction `f` through the design-preview window.
+  const phaseAt = (c, f) => (f * span / effPeriod(c)) % 1;
 
   let yMax = CONFIG.max_qps;
-  for (const fid in scnBuilder.curves)
-    for (let i = 0; i <= N; i++) { const v = evalCurve(scnBuilder.curves[fid], i / N); if (v > yMax) yMax = v; }
+  if (live) {
+    for (const fid in scnBuilder.curves)
+      for (const p of (history[fid] || []))
+        if (p.t >= tMin && p.target_qps != null && p.target_qps > yMax) yMax = p.target_qps;
+  } else {
+    for (const fid in scnBuilder.curves)
+      for (let i = 0; i <= N; i++) { const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], i / N)); if (v > yMax) yMax = v; }
+  }
   yMax = niceCeil(Math.max(yMax, 0.1));
 
   ctx.strokeStyle = getCSS("--line"); ctx.fillStyle = getCSS("--muted");
@@ -998,25 +1036,36 @@ function drawPreview(canvasId) {
     ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + W, y); ctx.stroke(); ctx.globalAlpha = 1;
     ctx.textAlign = "right"; ctx.fillText(val.toFixed(val < 10 ? 1 : 0), padL - 8, y);
   }
+  // x labels: trailing seconds, now on the right (matches the latency chart).
   ctx.textAlign = "center"; ctx.textBaseline = "top";
-  const per = scnBuilder.period;
-  for (let i = 0; i <= 4; i++) { const x = padL + W * (i / 4); ctx.fillText(Math.round(per * i / 4) + "s", x, padT + H + 6); }
-
-  const xOf = p => padL + W * p, yOf = v => padT + H * (1 - v / yMax);
-  for (const fid in scnBuilder.curves) {
-    ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
-    ctx.beginPath();
-    for (let i = 0; i <= N; i++) {
-      const v = evalCurve(scnBuilder.curves[fid], i / N), x = xOf(i / N), y = yOf(Math.min(v, yMax));
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    }
-    ctx.stroke();
+  const step = spanStep(span);
+  for (let s = 0; s <= span; s += step) {
+    const x = padL + W * (1 - s / span);
+    ctx.fillText("-" + s + "s", x, padT + H + 6);
   }
 
-  if (scnState.playing) {
-    const x = xOf(Math.max(0, Math.min(1, scnState.phase)));
-    ctx.strokeStyle = getCSS("--accent"); ctx.lineWidth = 1.5; ctx.globalAlpha = 0.85;
-    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + H); ctx.stroke(); ctx.globalAlpha = 1;
+  const yOf = v => padT + H * (1 - v / yMax);
+  if (live) {
+    const xOf = t => padL + W * ((t - tMin) / (span * 1000));
+    for (const fid in scnBuilder.curves) {
+      const pts = (history[fid] || []).filter(p => p.t >= tMin && p.target_qps != null);
+      if (!pts.length) continue;
+      ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
+      ctx.beginPath();
+      pts.forEach((p, i) => { const x = xOf(p.t), y = yOf(Math.min(p.target_qps, yMax)); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+      ctx.stroke();
+    }
+  } else {
+    const xOf = f => padL + W * f;   // oldest (left) -> now (right)
+    for (const fid in scnBuilder.curves) {
+      ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
+      ctx.beginPath();
+      for (let i = 0; i <= N; i++) {
+        const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], i / N)), x = xOf(i / N), y = yOf(Math.min(v, yMax));
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
   }
 }
 
