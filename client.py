@@ -97,6 +97,8 @@ class MetricsCollector:
         self.completion_times = collections.defaultdict(list)
         self.status_counts = collections.defaultdict(lambda: collections.defaultdict(int))
         self.active_requests = collections.defaultdict(int)
+        self.tpot_window = collections.defaultdict(list)  # (duration - ttft) / output_tokens
+        self.itl_window = collections.defaultdict(list)   # inter-token latency samples
 
     def record_start(self, fairness_id: str) -> None:
         self.active_requests[fairness_id] += 1
@@ -108,8 +110,10 @@ class MetricsCollector:
         self.duration_window.clear()
         self.completion_times.clear()
         self.status_counts.clear()
+        self.tpot_window.clear()
+        self.itl_window.clear()
 
-    def record(self, fairness_id: str, status: str, ttft: Optional[float], duration: float) -> None:
+    def record(self, fairness_id: str, status: str, ttft: Optional[float], duration: float, output_tokens: int = 0) -> None:
         """Records a completed (or failed) request into the sliding window."""
         self.active_requests[fairness_id] -= 1
         if self.active_requests[fairness_id] < 0:
@@ -117,27 +121,39 @@ class MetricsCollector:
         self.status_counts[fairness_id][status] += 1
         if status == "200" and ttft is not None:
             now = time.monotonic()
+            # Calculate TPOT (Time Per Output Token) and ITL (Inter-Token Latency)
+            decode_time = duration - ttft
+            if output_tokens > 0 and decode_time > 0:
+                tpot = decode_time / output_tokens
+                self.tpot_window[fairness_id].append(tpot)
+                # ITL is approximately the same as TPOT for streaming responses
+                self.itl_window[fairness_id].append(tpot)
             self.ttft_window[fairness_id].append((now, ttft))
             self.duration_window[fairness_id].append((now, duration))
             self.completion_times[fairness_id].append(now)
 
-    def get_realtime_stats(self, tenant_id: str) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float], float, int, int, int, int, int]:
-        """Calculates median + P90 latency and extracts status code counts for the UI.
+    def get_realtime_stats(self, tenant_id: str) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], float, int, int, int, int, int]:
+        """Calculates median + P90/P95 latency and extracts status code counts for the UI.
 
         Aggregates over every request completed during the current stage (the
         windows are reset at each stage boundary), not just a trailing window.
         """
         now = time.monotonic()
 
-        # TTFT median + P90 over all completions in the stage.
+        # TTFT median + P95 over all completions in the stage.
         ttfts = sorted(val for _ts, val in self.ttft_window[tenant_id])
         med_ttft = ttfts[len(ttfts) // 2] if ttfts else None
-        p90_ttft = ttfts[int(len(ttfts) * 0.9)] if ttfts else None
+        p95_ttft = ttfts[int(len(ttfts) * 0.95)] if ttfts else None
 
-        # Duration median + P90 over all completions in the stage.
+        # Duration median + P95 over all completions in the stage.
         durs = sorted(val for _ts, val in self.duration_window[tenant_id])
         med_dur = durs[len(durs) // 2] if durs else None
-        p90_dur = durs[int(len(durs) * 0.9)] if durs else None
+        p95_dur = durs[int(len(durs) * 0.95)] if durs else None
+
+        # TPOT median + P95
+        tpots = sorted(self.tpot_window[tenant_id])
+        med_tpot = tpots[len(tpots) // 2] if tpots else None
+        p95_tpot = tpots[int(len(tpots) * 0.95)] if tpots else None
 
         stats = self.status_counts[tenant_id]
         s_200 = stats.get("200", 0)
@@ -155,7 +171,7 @@ class MetricsCollector:
             window_duration = max(now - times[0], 0.1)
             achieved_qps = len(times) / window_duration
 
-        return med_ttft, p90_ttft, med_dur, p90_dur, achieved_qps, s_200, s_429, s_503, s_err, self.active_requests[tenant_id]
+        return med_ttft, p95_ttft, med_dur, p95_dur, med_tpot, p95_tpot, achieved_qps, s_200, s_429, s_503, s_err, self.active_requests[tenant_id]
 
 # ==============================================================================
 # 3. LOAD GENERATOR ENGINE
@@ -239,9 +255,29 @@ class LoadGenerator:
                 if resp.status == 200:
                     status_str = "200"
                     # Stream the body to completion; TTFT is the first byte off the wire.
-                    async for _chunk in resp.content.iter_any():
+                    # Parse SSE to count output tokens for TPOT calculation
+                    output_tokens = 0
+                    buffer = ""
+                    async for chunk in resp.content.iter_any():
                         if ttft is None:
                             ttft = time.monotonic() - start_time
+
+                        # Parse SSE to count tokens
+                        buffer += chunk.decode('utf-8', errors='ignore')
+                        while '\n\n' in buffer:
+                            event, buffer = buffer.split('\n\n', 1)
+                            if event.startswith('data: '):
+                                data_str = event[6:].strip()
+                                if data_str and data_str != '[DONE]':
+                                    try:
+                                        import json
+                                        data = json.loads(data_str)
+                                        # Count tokens from choices
+                                        for choice in data.get('choices', []):
+                                            if 'text' in choice or 'delta' in choice:
+                                                output_tokens += 1
+                                    except:
+                                        pass
                 else:
                     msg = (await resp.text()).lower()
                     if resp.status == 503 or "timed out" in msg:
@@ -257,7 +293,7 @@ class LoadGenerator:
             status_str = "Error (Conn Refused)" if isinstance(getattr(e, "os_error", None), ConnectionRefusedError) else f"Error ({type(e).__name__})"
         except asyncio.CancelledError:
             # Aborting (Ctrl+C or end-of-narrative drain); still record the attempt.
-            self.metrics.record(tenant.fairness_id, "Cancelled", ttft, time.monotonic() - start_time)
+            self.metrics.record(tenant.fairness_id, "Cancelled", ttft, time.monotonic() - start_time, output_tokens)
             raise
         except aiohttp.ClientError as e:
             status_str = f"Error ({type(e).__name__})"
@@ -265,7 +301,7 @@ class LoadGenerator:
             status_str = f"Error ({type(e).__name__})"
 
         duration = time.monotonic() - start_time
-        self.metrics.record(tenant.fairness_id, status_str, ttft, duration)
+        self.metrics.record(tenant.fairness_id, status_str, ttft, duration, output_tokens)
 
     def _spawn(self, tenant: Tenant, local: Set["asyncio.Task"]) -> None:
         """Launches one request task, tracking it both per-worker and globally."""
@@ -448,7 +484,11 @@ def parse_args() -> argparse.Namespace:
 
     # The target IP is injected via the EPP_IP environment variable (e.g. the
     # EPP service clusterIP set by the Justfile). Falls back to localhost.
-    default_url = f"http://{os.environ.get('EPP_IP', 'localhost')}:80/v1/completions"
+    # For RHAII/gateway-based routing, use GATEWAY_URL to override with full path
+    if os.environ.get('GATEWAY_URL'):
+        default_url = os.environ.get('GATEWAY_URL')
+    else:
+        default_url = f"http://{os.environ.get('EPP_IP', 'localhost')}:80/v1/completions"
 
     parser.add_argument("--url", default=default_url, help="Target gateway completions endpoint.")
     parser.add_argument("--capacity", type=int, default=16, help="Deployment concurrency capacity (for the saturation banner).")

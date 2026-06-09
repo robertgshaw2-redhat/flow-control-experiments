@@ -116,23 +116,73 @@
       </div>
       <h2 id="control-title">Concurrency</h2>
       <div id="tenants"></div>
+
+      <!-- Automated Test Runner -->
+      <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--line);">
+        <h2 style="margin-bottom:10px;">🤖 Auto Test</h2>
+        <select id="test-scenario" style="width:100%; margin-bottom:10px;">
+          <option value="">Select a test scenario...</option>
+          <optgroup label="Completed Tests">
+            <option value="test2">Test 2: Priority Differentiation</option>
+            <option value="test3">Test 3: Fairness Validation</option>
+          </optgroup>
+          <optgroup label="Tier 1: Gateway Fundamentals">
+            <option value="test4">Test 4: TTL Expiration</option>
+            <option value="test5">Test 5: Capacity Rejection</option>
+          </optgroup>
+          <optgroup label="Tier 2: Priority & Ordering">
+            <option value="test7">Test 7: Priority Inversion Prevention</option>
+            <option value="test10">Test 10: Batch Job Interference</option>
+          </optgroup>
+          <optgroup label="Tier 3: Stateful Optimization">
+            <option value="test6">Test 6: Prefix Cache-Aware Routing</option>
+          </optgroup>
+          <optgroup label="Plugin Configuration Tests">
+            <option value="test11">Test 11: Queue vs Cache Scoring</option>
+            <option value="test12">Test 12: Bypass vs Strict Queuing</option>
+          </optgroup>
+          <optgroup label="Demos">
+            <option value="saturation">Demo: Gradual Saturation</option>
+            <option value="burst">Demo: Burst Spike</option>
+          </optgroup>
+        </select>
+        <button id="run-test-btn" disabled style="width:100%; margin-bottom:8px;">▶ Run Selected Test</button>
+        <button id="stop-test-btn" disabled style="width:100%; background:var(--red); border-color:var(--red);">⏹ Stop Test</button>
+        <div id="test-status" style="margin-top:8px; font-size:11px; color:var(--muted); min-height:20px;"></div>
+      </div>
+
       <div style="margin-top:18px; display:flex; gap:10px;">
         <button id="reset-btn" title="Clear latency history & counters">Reset metrics</button>
         <button id="zero-btn" title="Set both flows to 0">Stop all</button>
+      </div>
+
+      <!-- EPP Configuration Display -->
+      <div style="margin-top:20px; border-top:1px solid var(--line); padding-top:16px;">
+        <h2 style="cursor:pointer; user-select:none;" id="config-toggle" title="Click to expand/collapse">
+          EPP Configuration <span id="config-arrow" style="font-size:10px;">▼</span>
+        </h2>
+        <div id="epp-config" style="display:none; font-size:11px; line-height:1.6;">
+          <div style="color:var(--muted); margin-bottom:8px;">Loading...</div>
+        </div>
       </div>
     </div>
 
     <!-- RIGHT: chart + cards -->
     <div class="panel">
       <div class="controls">
-        <div class="seg" id="metric-seg">
-          <button data-metric="p95_ttft" class="active">P95 TTFT</button>
-          <button data-metric="med_ttft">Median TTFT</button>
-          <button data-metric="max_ttft">Max TTFT</button>
-          <button data-metric="p95_total">P95 Total</button>
-          <button data-metric="med_total">Median Total</button>
-          <button data-metric="max_total">Max latency</button>
-        </div>
+        <label style="display:flex; align-items:center; gap:8px;">
+          <span style="color:var(--muted); font-size:12px;">Metric:</span>
+          <select id="metric-sel" style="flex:1; min-width:200px;">
+            <option value="p95_ttft" selected>P95 TTFT</option>
+            <option value="med_ttft">Median TTFT</option>
+            <option value="max_ttft">Max TTFT</option>
+            <option value="p95_total">P95 Total Latency</option>
+            <option value="med_total">Median Total Latency</option>
+            <option value="max_total">Max Total Latency</option>
+            <option value="p95_tpot">P95 TPOT (Time Per Output Token)</option>
+            <option value="med_tpot">Median TPOT</option>
+          </select>
+        </label>
         <label title="How much time the chart shows on the x-axis. Purely visual — does not change how points are computed.">Chart span
           <select id="span-sel">
             <option value="30">30s</option>
@@ -213,6 +263,8 @@ const METRIC_LABELS = {
   p95_total: "P95 total latency (s)",
   med_total: "Median total latency (s)",
   max_total: "Max total latency (s)",
+  p95_tpot: "P95 time-per-output-token (ms)",
+  med_tpot: "Median time-per-output-token (ms)",
 };
 
 // ---------- init ----------
@@ -234,14 +286,10 @@ async function init() {
     b.addEventListener("click", () => setMode(b.dataset.mode));
   });
 
-  // metric selector
-  document.querySelectorAll("#metric-seg button").forEach(b => {
-    b.addEventListener("click", () => {
-      metric = b.dataset.metric;
-      document.querySelectorAll("#metric-seg button").forEach(x => x.classList.remove("active"));
-      b.classList.add("active");
-      draw();
-    });
+  // metric selector (dropdown)
+  document.getElementById("metric-sel").addEventListener("change", (e) => {
+    metric = e.target.value;
+    draw();
   });
   document.getElementById("span-sel").addEventListener("change", e => { chartSpan = +e.target.value; draw(); });
   document.getElementById("window-sel").addEventListener("change", e => { smoothing = +e.target.value; });
@@ -386,10 +434,31 @@ function onStats(data) {
       t: now,
       p95_ttft: t.p95_ttft, med_ttft: t.med_ttft, max_ttft: t.max_ttft,
       p95_total: t.p95_total, med_total: t.med_total, max_total: t.max_total,
+      p95_tpot: t.p95_tpot ? t.p95_tpot * 1000 : null, // Convert to ms
+      med_tpot: t.med_tpot ? t.med_tpot * 1000 : null,
     });
     // prune to the largest span we might show (5m) plus a little slack
     const cutoff = now - 320000;
     while (h.length && h[0].t < cutoff) h.shift();
+
+    // Sync sliders with actual targets from backend (for auto-test runner)
+    if (data.mode === "concurrency") {
+      values.concurrency[t.fairness_id] = t.target;
+      const slider = document.querySelector(`.slider-row[data-fairness-id="${t.fairness_id}"] input[type="range"]`);
+      if (slider && parseInt(slider.value) !== t.target) {
+        slider.value = t.target;
+        const valueSpan = slider.nextElementSibling;
+        if (valueSpan) valueSpan.textContent = t.target;
+      }
+    } else if (data.mode === "qps") {
+      values.qps[t.fairness_id] = t.target_qps;
+      const slider = document.querySelector(`.slider-row[data-fairness-id="${t.fairness_id}"] input[type="range"]`);
+      if (slider && parseFloat(slider.value) !== t.target_qps) {
+        slider.value = t.target_qps;
+        const valueSpan = slider.nextElementSibling;
+        if (valueSpan) valueSpan.textContent = t.target_qps.toFixed(1);
+      }
+    }
   }
   renderCards(data);
   draw();
@@ -507,6 +576,278 @@ function niceCeil(v) {
   const n = v / mag;
   const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
   return nice * mag;
+}
+
+// Automated Test Runner
+let testRunning = false;
+let testIntervalId = null;
+const testScenarioSelect = document.getElementById('test-scenario');
+const runTestBtn = document.getElementById('run-test-btn');
+const stopTestBtn = document.getElementById('stop-test-btn');
+const testStatus = document.getElementById('test-status');
+
+testScenarioSelect.addEventListener('change', () => {
+  runTestBtn.disabled = !testScenarioSelect.value || testRunning;
+});
+
+const TEST_SCENARIOS = {
+  'test2': {
+    name: 'Test 2: Priority Differentiation',
+    duration: 120000, // 2 minutes
+    phases: [
+      { time: 0, premium: 8, standard: 8, desc: 'Baseline: 8+8 (healthy)' },
+      { time: 30000, premium: 8, standard: 32, desc: 'Saturate with standard (32)' },
+      { time: 60000, premium: 16, standard: 32, desc: 'Both saturated (16+32)' },
+      { time: 90000, premium: 8, standard: 8, desc: 'Return to baseline' }
+    ]
+  },
+  'test3': {
+    name: 'Test 3: Fairness Validation',
+    duration: 90000, // 1.5 minutes
+    phases: [
+      { time: 0, premium: 16, standard: 16, desc: 'Equal load (16+16)' },
+      { time: 30000, premium: 32, standard: 8, desc: 'Premium heavy (32+8)' },
+      { time: 60000, premium: 8, standard: 32, desc: 'Standard heavy (8+32)' }
+    ]
+  },
+  'saturation': {
+    name: 'Demo: Gradual Saturation',
+    duration: 120000,
+    phases: [
+      { time: 0, premium: 4, standard: 4, desc: 'Light load (4+4)' },
+      { time: 20000, premium: 8, standard: 8, desc: 'At capacity (8+8)' },
+      { time: 40000, premium: 12, standard: 12, desc: 'Moderate overload (12+12)' },
+      { time: 60000, premium: 16, standard: 16, desc: 'Heavy overload (16+16)' },
+      { time: 90000, premium: 4, standard: 4, desc: 'Cool down (4+4)' }
+    ]
+  },
+  'burst': {
+    name: 'Demo: Burst Spike',
+    duration: 90000,
+    phases: [
+      { time: 0, premium: 8, standard: 8, desc: 'Steady state (8+8)' },
+      { time: 20000, premium: 8, standard: 32, desc: '🔥 BURST! Standard spikes to 32' },
+      { time: 50000, premium: 8, standard: 8, desc: 'Recovery (8+8)' }
+    ]
+  },
+  'test4': {
+    name: 'Test 4: TTL Expiration',
+    duration: 30000,
+    phases: [
+      { time: 0, premium: 32, standard: 0, desc: 'Overload: 32 premium (exceeds capacity)' },
+      { time: 20000, premium: 0, standard: 0, desc: 'Cooldown (all stop)' }
+    ]
+  },
+  'test5': {
+    name: 'Test 5: Capacity Rejection',
+    duration: 30000,
+    phases: [
+      { time: 0, premium: 60, standard: 10, desc: 'Exceed limits: 60 premium + 10 batch' },
+      { time: 20000, premium: 0, standard: 0, desc: 'Cooldown (all stop)' }
+    ]
+  },
+  'test6': {
+    name: 'Test 6: Prefix Cache-Aware Routing',
+    duration: 120000,
+    phases: [
+      { time: 0, premium: 4, standard: 4, desc: 'Warm up: 4+4' },
+      { time: 30000, premium: 16, standard: 16, desc: 'Steady load: 16+16' },
+      { time: 90000, premium: 4, standard: 4, desc: 'Cooldown: 4+4' }
+    ]
+  },
+  'test7': {
+    name: 'Test 7: Priority Inversion Prevention',
+    duration: 90000,
+    phases: [
+      { time: 0, premium: 0, standard: 50, desc: 'Flood low priority: 50 standard' },
+      { time: 30000, premium: 5, standard: 50, desc: 'High priority arrives: 5 premium' },
+      { time: 60000, premium: 0, standard: 0, desc: 'Cooldown (all stop)' }
+    ]
+  },
+  'test10': {
+    name: 'Test 10: Batch Job Interference',
+    duration: 90000,
+    phases: [
+      { time: 0, premium: 0, standard: 20, desc: 'Batch jobs: 20 standard (long prompts)' },
+      { time: 30000, premium: 16, standard: 20, desc: 'Interactive arrives: 16 premium' },
+      { time: 60000, premium: 0, standard: 0, desc: 'Cooldown (all stop)' }
+    ]
+  },
+  'test11': {
+    name: 'Test 11: Queue vs Cache Scoring',
+    duration: 120000,
+    phases: [
+      { time: 0, premium: 8, standard: 8, desc: 'Baseline load (8+8)' },
+      { time: 90000, premium: 0, standard: 0, desc: 'Cooldown' }
+    ]
+  },
+  'test12': {
+    name: 'Test 12: Bypass vs Strict Queuing',
+    duration: 120000,
+    phases: [
+      { time: 0, premium: 8, standard: 8, desc: 'Baseline load (8+8)' },
+      { time: 90000, premium: 0, standard: 0, desc: 'Cooldown' }
+    ]
+  }
+};
+
+async function runAutomatedTest(scenarioKey) {
+  const scenario = TEST_SCENARIOS[scenarioKey];
+  if (!scenario) return;
+
+  testRunning = true;
+  runTestBtn.disabled = true;
+  stopTestBtn.disabled = false;
+  testScenarioSelect.disabled = true;
+
+  testStatus.innerHTML = `<span style="color:var(--premium)">▶ Running: ${scenario.name}</span>`;
+
+  const startTime = Date.now();
+  let currentPhaseIndex = 0;
+
+  testIntervalId = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+
+    // Check if test should end
+    if (elapsed >= scenario.duration || !testRunning) {
+      clearInterval(testIntervalId);
+      testIntervalId = null;
+      testRunning = false;
+      runTestBtn.disabled = false;
+      stopTestBtn.disabled = true;
+      testScenarioSelect.disabled = false;
+      testStatus.innerHTML = `<span style="color:var(--muted)">✓ Test completed</span>`;
+
+      // Set to zero
+      setTenantTarget('premium-tenant', 0);
+      setTenantTarget('standard-tenant', 0);
+      return;
+    }
+
+    // Find current phase
+    const nextPhase = scenario.phases.find((p, i) => i > currentPhaseIndex && elapsed >= p.time);
+    if (nextPhase) {
+      currentPhaseIndex = scenario.phases.indexOf(nextPhase);
+      const phase = scenario.phases[currentPhaseIndex];
+
+      // Apply phase settings
+      setTenantTarget('premium-tenant', phase.premium);
+      setTenantTarget('standard-tenant', phase.standard);
+
+      const remaining = Math.ceil((scenario.duration - elapsed) / 1000);
+      testStatus.innerHTML = `<span style="color:var(--accent)">${phase.desc}</span><br><span style="color:var(--muted)">${remaining}s remaining</span>`;
+    }
+  }, 500);
+
+  // Start first phase immediately
+  const firstPhase = scenario.phases[0];
+  setTenantTarget('premium-tenant', firstPhase.premium);
+  setTenantTarget('standard-tenant', firstPhase.standard);
+}
+
+function setTenantTarget(fairnessId, value) {
+  const mode = document.querySelector('#mode-seg button.active').dataset.mode;
+  const url = mode === 'concurrency' ? '/api/concurrency' : '/api/qps';
+
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fairness_id: fairnessId, target: value })
+  });
+}
+
+runTestBtn.addEventListener('click', () => {
+  const scenarioKey = testScenarioSelect.value;
+  if (scenarioKey) {
+    runAutomatedTest(scenarioKey);
+  }
+});
+
+stopTestBtn.addEventListener('click', () => {
+  if (testIntervalId) {
+    clearInterval(testIntervalId);
+    testIntervalId = null;
+  }
+  testRunning = false;
+  runTestBtn.disabled = false;
+  stopTestBtn.disabled = true;
+  testScenarioSelect.disabled = false;
+  testStatus.innerHTML = '<span style="color:var(--standard)">⏹ Test stopped</span>';
+
+  // Set to zero
+  setTenantTarget('premium-tenant', 0);
+  setTenantTarget('standard-tenant', 0);
+});
+
+// EPP Config loading
+let configExpanded = false;
+const configToggle = document.getElementById('config-toggle');
+const configArrow = document.getElementById('config-arrow');
+const eppConfigDiv = document.getElementById('epp-config');
+
+configToggle.addEventListener('click', () => {
+  configExpanded = !configExpanded;
+  eppConfigDiv.style.display = configExpanded ? 'block' : 'none';
+  configArrow.textContent = configExpanded ? '▲' : '▼';
+  if (configExpanded && eppConfigDiv.innerHTML.includes('Loading')) {
+    loadEppConfig();
+  }
+});
+
+async function loadEppConfig() {
+  try {
+    const resp = await fetch('/api/epp-config');
+    const config = await resp.json();
+
+    if (config.error) {
+      eppConfigDiv.innerHTML = `<div style="color:var(--red)">Error: ${config.error}</div>`;
+      return;
+    }
+
+    const fc = config.flowControl || {};
+    const ud = config.utilizationDetector || {};
+
+    let html = '<div style="color:var(--muted); margin-bottom:10px;">';
+    html += `<div><b style="color:var(--txt);">Service:</b> ${config.service} (${config.namespace})</div>`;
+    html += '</div>';
+
+    html += '<div style="background:var(--panel2); padding:10px; border-radius:6px; margin-bottom:10px;">';
+    html += '<div style="color:var(--accent); font-weight:600; margin-bottom:6px;">🔍 Saturation Detector Settings</div>';
+    html += `<div><b>Queue Depth Threshold:</b> <span style="color:var(--${ud.queueDepthThreshold ? 'premium' : 'red'})">${ud.queueDepthThreshold !== undefined && ud.queueDepthThreshold !== null ? ud.queueDepthThreshold : 'NOT SET (using defaults)'}</span> ${ud.queueDepthThreshold === 1 ? '✓ Strict' : ''}</div>`;
+    html += `<div><b>KV Cache Util Threshold:</b> ${ud.kvCacheUtilThreshold !== undefined && ud.kvCacheUtilThreshold !== null ? (ud.kvCacheUtilThreshold * 100).toFixed(0) + '%' : 'NOT SET'}</div>`;
+    html += `<div><b>Metrics Staleness:</b> ${ud.metricsStalenessThreshold || 'NOT SET'}</div>`;
+    html += '</div>';
+
+    html += '<div style="background:var(--panel2); padding:10px; border-radius:6px; margin-bottom:10px;">';
+    html += '<div style="color:var(--accent); font-weight:600; margin-bottom:6px;">📊 Global Limits</div>';
+    html += `<div><b>maxRequests:</b> ${fc.maxRequests || 'N/A'}</div>`;
+    html += `<div><b>maxBytes:</b> ${fc.maxBytes ? (fc.maxBytes / 1024 / 1024 / 1024).toFixed(1) + 'GB' : 'N/A'}</div>`;
+    html += `<div><b>defaultRequestTTL:</b> ${fc.defaultRequestTTL || 'N/A'}</div>`;
+    html += '</div>';
+
+    if (fc.priorityBands && fc.priorityBands.length > 0) {
+      html += '<div style="background:var(--panel2); padding:10px; border-radius:6px;">';
+      html += '<div style="color:var(--accent); font-weight:600; margin-bottom:6px;">🎯 Priority Bands</div>';
+      fc.priorityBands.forEach((band, i) => {
+        const colorClass = band.priority >= 100 ? 'premium' : band.priority < 0 ? 'standard' : 'muted';
+        html += `<div style="margin-bottom:6px; padding:6px; background:var(--panel); border-radius:4px;">`;
+        html += `<div style="color:var(--${colorClass}); font-weight:600;">Priority ${band.priority}</div>`;
+        html += `<div><b>maxRequests:</b> ${band.maxRequests || 'N/A'}</div>`;
+        html += `<div><b>maxBytes:</b> ${band.maxBytes ? (band.maxBytes / 1024 / 1024).toFixed(0) + 'MB' : 'N/A'}</div>`;
+        html += `<div><b>Fairness:</b> ${band.fairnessPolicyRef || 'N/A'}</div>`;
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += '<div style="margin-top:10px; padding:8px; background:var(--panel2); border-radius:6px; font-size:10px; color:var(--muted);">';
+    html += '<b>Note:</b> To modify config, edit LLMInferenceService YAML';
+    html += '</div>';
+
+    eppConfigDiv.innerHTML = html;
+  } catch (e) {
+    eppConfigDiv.innerHTML = `<div style="color:var(--red)">Failed to load config: ${e.message}</div>`;
+  }
 }
 
 init();

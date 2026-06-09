@@ -10,17 +10,13 @@
 # --- Configuration (override via CLI or environment) ------------------------
 
 # Namespace the EPP/model server are deployed in.
-namespace   := env_var_or_default("NAMESPACE", "llm-test")
+namespace   := env_var_or_default("NAMESPACE", "rob-dev")
 # Guide name; the EPP service is "<guide_name>-epp".
-guide_name  := env_var_or_default("GUIDE_NAME", "qwen-basic")
+guide_name  := env_var_or_default("GUIDE_NAME", "flow-control")
 # Derived EPP service name (the Service whose clusterIP we target).
-epp_service := env_var_or_default("EPP_SERVICE", guide_name + "-epp-service")
+epp_service := guide_name + "-epp"
 # Model name as registered in vLLM (--served-model-name).
-model       := env_var_or_default("MODEL_NAME", "Qwen/Qwen2.5-0.5B-Instruct")
-# For RHAII: use gateway path instead of direct EPP
-use_gateway := env_var_or_default("USE_GATEWAY", "true")
-gateway_svc := "inference-gateway-istio.redhat-ods-applications.svc"
-gateway_path := "/" + namespace + "/" + guide_name + "/v1/completions"
+model       := env_var_or_default("MODEL_NAME", "google/gemma-4-31B-it")
 # Container image used for the client pod (aiohttp is pip-installed at runtime).
 image       := env_var_or_default("CLIENT_IMAGE", "python:3.12-slim")
 # Name of the throwaway client pod.
@@ -64,7 +60,6 @@ client *ARGS:
 
     # Start a long-lived pod we can copy into and exec against.
     kubectl run {{pod}} -n {{namespace}} --image={{image}} --restart=Never \
-        --overrides='{"spec":{"serviceAccountName":"epp-client"}}' \
         --command -- sleep infinity
     kubectl wait --for=condition=Ready pod/{{pod}} -n {{namespace}} --timeout=120s
 
@@ -74,10 +69,9 @@ client *ARGS:
     # Install the client's only runtime dependency (requires pod egress to PyPI).
     kubectl exec -i {{pod}} -n {{namespace}} -- pip install --quiet --no-cache-dir aiohttp
 
-    # Run the client, injecting the gateway URL for RHAII
-    GATEWAY_URL="http://inference-gateway-istio.redhat-ods-applications.svc/{{namespace}}/{{guide_name}}/v1/completions"
+    # Run the client, injecting the EPP clusterIP as the EPP_IP env var.
     kubectl exec -it {{pod}} -n {{namespace}} -- \
-        env GATEWAY_URL="${GATEWAY_URL}" python3 /tmp/client.py --model {{model}} {{ARGS}}
+        env EPP_IP="${IP}" python3 /tmp/client.py --model {{model}} {{ARGS}}
 
 # Launch the interactive web UI (flow_ui_server.py) in an in-cluster pod and
 # port-forward it to localhost. Open http://localhost:{{ui_port}} once it's up.
@@ -102,7 +96,6 @@ flow-ui *ARGS:
 
     # Start a long-lived pod we can copy into and exec against.
     kubectl run {{pod}} -n {{namespace}} --image={{image}} --restart=Never \
-        --overrides='{"spec":{"serviceAccountName":"epp-client"}}' \
         --command -- sleep infinity
     kubectl wait --for=condition=Ready pod/{{pod}} -n {{namespace}} --timeout=120s
 
@@ -119,9 +112,8 @@ flow-ui *ARGS:
     # Start the UI server detached inside the pod, listening on 8080. nohup +
     # redirect lets the exec session return while the server keeps running
     # (reparented to the pod's init).
-    GATEWAY_URL="http://inference-gateway-istio.redhat-ods-applications.svc/{{namespace}}/{{guide_name}}/v1/completions"
     kubectl exec -i {{pod}} -n {{namespace}} -- sh -c \
-        'cd /tmp && nohup env GATEWAY_URL="'"${GATEWAY_URL}"'" python3 flow_ui_server.py --model {{model}} {{ARGS}} > /tmp/flow_ui.log 2>&1 &'
+        'cd /tmp && nohup env EPP_IP="'"${IP}"'" python3 flow_ui_server.py --model {{model}} {{ARGS}} > /tmp/flow_ui.log 2>&1 &'
 
     # Give it a moment to bind, then surface any startup errors.
     sleep 3

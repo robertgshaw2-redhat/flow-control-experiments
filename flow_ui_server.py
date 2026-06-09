@@ -97,6 +97,7 @@ def window_stats(metrics: MetricsCollector, fid: str, window_sec: float, now: fl
     ttfts = sorted(v for ts, v in metrics.ttft_window[fid] if ts >= cutoff)
     durs = sorted(v for ts, v in metrics.duration_window[fid] if ts >= cutoff)
     comps = [ts for ts in metrics.completion_times[fid] if ts >= cutoff]
+    tpots = sorted(metrics.tpot_window[fid])  # TPOT is not timestamped, use all samples
 
     # Throughput over the window (guard against a degenerate tiny span).
     qps = 0.0
@@ -120,6 +121,8 @@ def window_stats(metrics: MetricsCollector, fid: str, window_sec: float, now: fl
         "med_total": _percentile(durs, 0.5),
         "p95_total": _percentile(durs, 0.95),
         "max_total": _percentile(durs, 1.0),
+        "med_tpot": _percentile(tpots, 0.5),
+        "p95_tpot": _percentile(tpots, 0.95),
         "qps": qps,
         "samples": len(ttfts),
         "active": metrics.active_requests[fid],
@@ -230,6 +233,33 @@ async def handle_index(request: web.Request) -> web.Response:
 
 async def handle_config(request: web.Request) -> web.Response:
     app = request.app
+
+    # Try to fetch EPP metrics if available
+    epp_metrics = {}
+    try:
+        # Extract EPP host from URL
+        from urllib.parse import urlparse
+        parsed = urlparse(app["args"].url)
+        epp_host = parsed.netloc.split(':')[0] if parsed.netloc else None
+
+        if epp_host:
+            # Try to fetch Prometheus metrics from EPP (usually on port 9090)
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"http://{epp_host}:9090/metrics", timeout=aiohttp.ClientTimeout(total=2)) as resp:
+                    if resp.status == 200:
+                        metrics_text = await resp.text()
+                        # Parse relevant metrics
+                        for line in metrics_text.split('\n'):
+                            if line.startswith('#') or not line.strip():
+                                continue
+                            if 'inference_extension_flow_control_queue_size' in line:
+                                epp_metrics['queue_size'] = line.split()[-1]
+                            elif 'inference_extension_flow_control_pool_saturation' in line:
+                                epp_metrics['saturation'] = line.split()[-1]
+    except Exception:
+        pass  # Metrics unavailable, continue without them
+
     return web.json_response({
         "url": app["args"].url,
         "model": app["args"].model,
@@ -241,6 +271,7 @@ async def handle_config(request: web.Request) -> web.Response:
             {"fairness_id": t.fairness_id, "objective": t.inference_objective, "priority": t.priority}
             for t in app["tenants"]
         ],
+        "epp_metrics": epp_metrics,
     })
 
 
@@ -367,6 +398,219 @@ async def handle_reset(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def handle_epp_config(request: web.Request) -> web.Response:
+    """Fetch current EPP Flow Control configuration from Kubernetes using in-cluster API."""
+    import json as json_module
+    import os
+
+    try:
+        # Extract namespace and service name from URL
+        url = request.app["args"].url
+        parts = url.split('/')
+        namespace = "llm-test"  # default
+        service_name = "qwen-basic"  # default
+
+        # Try to extract from URL path
+        for i, part in enumerate(parts):
+            if part and i > 0 and '.' not in part and ':' not in part:
+                if i + 1 < len(parts) and parts[i+1] and '.' not in parts[i+1]:
+                    namespace = part
+                    service_name = parts[i+1]
+                    break
+
+        # Use Kubernetes service account to call API
+        token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+        if not os.path.exists(token_path):
+            return web.json_response({
+                "error": "Not running in Kubernetes pod (no service account token found)",
+                "note": "Config display requires kubectl or Kubernetes API access"
+            }, status=503)
+
+        with open(token_path, 'r') as f:
+            token = f.read()
+
+        # Call Kubernetes API
+        k8s_host = os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')
+        k8s_port = os.environ.get('KUBERNETES_SERVICE_PORT', '443')
+        api_url = f"https://{k8s_host}:{k8s_port}/apis/serving.kserve.io/v1alpha2/namespaces/{namespace}/llminferenceservices/{service_name}"
+
+        import ssl
+        ssl_context = ssl.create_default_context(cafile=ca_cert_path)
+
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            headers = {"Authorization": f"Bearer {token}"}
+            async with session.get(api_url, headers=headers, ssl=ssl_context, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status != 200:
+                    return web.json_response({
+                        "error": f"K8s API returned {resp.status}",
+                        "details": await resp.text()
+                    }, status=500)
+
+                svc = await resp.json()
+                config = svc.get("spec", {}).get("router", {}).get("scheduler", {}).get("config", {}).get("inline", {})
+
+        # Extract flow control relevant parameters
+        flow_control = config.get("flowControl", {})
+        plugins = config.get("plugins", [])
+
+        # Find utilization-detector settings
+        util_detector = {}
+        for plugin in plugins:
+            if plugin.get("type") == "utilization-detector":
+                util_detector = plugin.get("parameters", {})
+                break
+
+        return web.json_response({
+            "namespace": namespace,
+            "service": service_name,
+            "flowControl": {
+                "maxRequests": flow_control.get("maxRequests"),
+                "maxBytes": flow_control.get("maxBytes"),
+                "defaultRequestTTL": flow_control.get("defaultRequestTTL"),
+                "priorityBands": flow_control.get("priorityBands", []),
+            },
+            "utilizationDetector": {
+                "queueDepthThreshold": util_detector.get("queueDepthThreshold"),
+                "kvCacheUtilThreshold": util_detector.get("kvCacheUtilThreshold"),
+                "metricsStalenessThreshold": util_detector.get("metricsStalenessThreshold"),
+            },
+            "saturationDetector": config.get("saturationDetector", {}).get("pluginRef"),
+        })
+
+    except Exception as e:
+        import traceback
+        return web.json_response({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }, status=500)
+
+
+async def handle_apply_preset(request: web.Request) -> web.Response:
+    """Apply a configuration preset to the LLMInferenceService.
+
+    NOTE: This requires kubectl to be available. When running in a pod without kubectl,
+    the user should apply presets manually via kubectl on their local machine.
+    """
+    import subprocess
+    import shutil
+    import json
+    import tempfile
+    import os
+
+    try:
+        data = await request.json()
+        preset = data.get("preset")
+
+        # Check if kubectl is available
+        if not shutil.which("kubectl"):
+            return web.json_response({
+                "error": "kubectl not available in this environment",
+                "message": "Config presets require kubectl. Apply manually via: kubectl patch llminferenceservice qwen-basic -n llm-test ...",
+                "preset_requested": preset
+            }, status=503)
+
+        # Define presets
+        PRESETS = {
+            "tier1": {
+                "name": "Tier 1: Defaults",
+                "queueDepthThreshold": None,  # Remove parameter
+                "kvCacheUtilThreshold": None,
+                "metricsStalenessThreshold": None,
+            },
+            "tier3": {
+                "name": "Tier 3: Strict Queuing",
+                "queueDepthThreshold": 1,
+                "kvCacheUtilThreshold": 0.8,
+                "metricsStalenessThreshold": None,
+            },
+            "test9": {
+                "name": "Test 9: Fast Failover",
+                "queueDepthThreshold": 1,
+                "kvCacheUtilThreshold": 0.8,
+                "metricsStalenessThreshold": "150ms",
+            },
+        }
+
+        if preset not in PRESETS:
+            return web.json_response({"error": "Unknown preset"}, status=400)
+
+        config = PRESETS[preset]
+
+        # Build kubectl patch JSON
+        params = {}
+        if config["queueDepthThreshold"] is not None:
+            params["queueDepthThreshold"] = config["queueDepthThreshold"]
+        if config["kvCacheUtilThreshold"] is not None:
+            params["kvCacheUtilThreshold"] = config["kvCacheUtilThreshold"]
+        if config["metricsStalenessThreshold"] is not None:
+            params["metricsStalenessThreshold"] = config["metricsStalenessThreshold"]
+
+        # If tier1 (defaults), remove all parameters
+        if preset == "tier1":
+            params = {}
+
+        patch = {
+            "spec": {
+                "router": {
+                    "scheduler": {
+                        "config": {
+                            "inline": {
+                                "plugins": [
+                                    {"type": "queue-scorer"},
+                                    {"type": "prefix-cache-scorer"},
+                                    {"type": "max-score-picker"},
+                                    {"type": "round-robin-fairness-policy"},
+                                    {"type": "fcfs-ordering-policy"},
+                                    {"type": "utilization-detector", "parameters": params} if params else {"type": "utilization-detector"},
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(patch, f)
+            patch_file = f.name
+
+        try:
+            result = subprocess.run(
+                ["kubectl", "patch", "llminferenceservice", "qwen-basic",
+                 "-n", "llm-test", "--type=merge", f"--patch-file={patch_file}"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            os.unlink(patch_file)
+
+            if result.returncode != 0:
+                return web.json_response({
+                    "error": "kubectl patch failed",
+                    "details": result.stderr
+                }, status=500)
+
+            return web.json_response({
+                "success": True,
+                "preset": config["name"],
+                "message": f"Applied {config['name']}. EPP scheduler will restart."
+            })
+        finally:
+            if os.path.exists(patch_file):
+                os.unlink(patch_file)
+
+    except Exception as e:
+        import traceback
+        return web.json_response({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }, status=500)
+
+
 # ==============================================================================
 # 5. LIFECYCLE
 # ==============================================================================
@@ -440,7 +684,11 @@ def parse_args() -> argparse.Namespace:
         description="Flow Control Demo - Interactive Web UI",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    default_url = f"http://{os.environ.get('EPP_IP', 'localhost')}:80/v1/completions"
+    # For RHAII/gateway-based routing, use GATEWAY_URL to override with full path
+    if os.environ.get('GATEWAY_URL'):
+        default_url = os.environ.get('GATEWAY_URL')
+    else:
+        default_url = f"http://{os.environ.get('EPP_IP', 'localhost')}:80/v1/completions"
     parser.add_argument("--url", default=default_url, help="Target gateway completions endpoint.")
     parser.add_argument("--capacity", type=int, default=16, help="Deployment concurrency capacity (for the saturation banner).")
     parser.add_argument("--model", default=os.environ.get("MODEL_NAME", "default"), help="Model / InferenceObjective name sent in the payload.")
@@ -458,10 +706,12 @@ def main() -> None:
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/config", handle_config)
     app.router.add_get("/api/stats", handle_stats)
+    app.router.add_get("/api/epp-config", handle_epp_config)
     app.router.add_post("/api/concurrency", handle_set_concurrency)
     app.router.add_post("/api/qps", handle_set_qps)
     app.router.add_post("/api/mode", handle_set_mode)
     app.router.add_post("/api/reset", handle_reset)
+    app.router.add_post("/api/apply-preset", handle_apply_preset)
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
 
