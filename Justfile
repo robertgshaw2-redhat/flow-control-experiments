@@ -21,6 +21,8 @@ model       := env_var_or_default("MODEL_NAME", "google/gemma-4-31B-it")
 image       := env_var_or_default("CLIENT_IMAGE", "python:3.12-slim")
 # Name of the throwaway client pod.
 pod         := "epp-client"
+# PVC that stores saved scenarios so they outlive the throwaway UI pod.
+pvc_name    := env_var_or_default("SCENARIOS_PVC", "flow-ui-scenarios")
 # Path to the load client on the host.
 client_py   := justfile_directory() / "client.py"
 # Path to the interactive web UI server + page on the host.
@@ -37,6 +39,43 @@ default:
 ip:
     @kubectl get service {{epp_service}} -n {{namespace}} -o jsonpath='{.spec.clusterIP}'
     @echo
+
+# Ensure the scenarios PVC exists (idempotent). This volume is mounted into the
+# throwaway UI pod at /tmp/scenarios, so saved scenarios survive the pod being
+# deleted/recreated on every `just flow-ui`.
+pvc:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    kubectl apply -n {{namespace}} -f - <<YAML
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: {{pvc_name}}
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+    YAML
+
+# Copy saved scenarios from the running UI pod's PVC down into this repo's
+# scenarios/ dir (a local backup you can commit). Requires the UI pod to be
+# running -- start it in another terminal with `just flow-ui`.
+save-scenarios-local:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! kubectl get pod {{pod}} -n {{namespace}} >/dev/null 2>&1; then
+        echo "ERROR: pod '{{pod}}' is not running in namespace '{{namespace}}'." >&2
+        echo "       Start the UI first (in another terminal): just flow-ui" >&2
+        exit 1
+    fi
+    # Copy into the repo dir (the PARENT): kubectl lands the source dir as
+    # <repo>/scenarios, merging over existing files. Copying onto an existing
+    # scenarios/ dir directly would nest it as scenarios/scenarios. Needs `tar`
+    # in the pod, which the slim image includes.
+    kubectl cp {{namespace}}/{{pod}}:/tmp/scenarios {{justfile_directory()}}
+    echo ">>> Saved scenarios to {{justfile_directory()}}/scenarios"
+    ls -1 {{justfile_directory()}}/scenarios
 
 # Launch client.py in an in-cluster pod, querying the EPP service clusterIP.
 # Extra args are passed straight through to client.py.
@@ -94,8 +133,26 @@ flow-ui *ARGS:
     }
     trap cleanup EXIT
 
-    # Start a long-lived pod we can copy into and exec against.
+    # Ensure the scenarios PVC exists before we mount it. Saved scenarios live on
+    # this volume (mounted at /tmp/scenarios = the server's SCN_DIR), so they
+    # outlive this throwaway pod across restarts.
+    kubectl apply -n {{namespace}} -f - <<YAML
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: {{pvc_name}}
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+    YAML
+
+    # Start a long-lived pod we can copy into and exec against. The --overrides
+    # block mounts the scenarios PVC at /tmp/scenarios; it replaces the generated
+    # container wholesale (JSON merge patch), so image/command are repeated here.
     kubectl run {{pod}} -n {{namespace}} --image={{image}} --restart=Never \
+        --overrides='{"spec":{"containers":[{"name":"{{pod}}","image":"{{image}}","command":["sleep","infinity"],"volumeMounts":[{"name":"scenarios","mountPath":"/tmp/scenarios"}]}],"volumes":[{"name":"scenarios","persistentVolumeClaim":{"claimName":"{{pvc_name}}"}}]}}' \
         --command -- sleep infinity
     kubectl wait --for=condition=Ready pod/{{pod}} -n {{namespace}} --timeout=120s
 
