@@ -139,9 +139,11 @@ def window_stats(metrics: MetricsCollector, fid: str, window_sec: float, now: fl
 
     return {
         "med_ttft": _percentile(ttfts, 0.5),
+        "p90_ttft": _percentile(ttfts, 0.90),
         "p95_ttft": _percentile(ttfts, 0.95),
         "max_ttft": _percentile(ttfts, 1.0),
         "med_total": _percentile(durs, 0.5),
+        "p90_total": _percentile(durs, 0.90),
         "p95_total": _percentile(durs, 0.95),
         "max_total": _percentile(durs, 1.0),
         "qps": qps,
@@ -178,9 +180,11 @@ def experiment_stats(metrics: MetricsCollector, fid: str, start: float, now: flo
 
     return {
         "med_ttft": _percentile(ttfts, 0.5),
+        "p90_ttft": _percentile(ttfts, 0.90),
         "p95_ttft": _percentile(ttfts, 0.95),
         "max_ttft": _percentile(ttfts, 1.0),
         "med_total": _percentile(durs, 0.5),
+        "p90_total": _percentile(durs, 0.90),
         "p95_total": _percentile(durs, 0.95),
         "max_total": _percentile(durs, 1.0),
         "qps": qps,
@@ -298,12 +302,13 @@ def _hash01(seed: int, n: int) -> float:
     return (x & 0xFFFFFFFF) / 4294967296.0
 
 
-def eval_curve(curve: dict, p: float, max_val: float) -> float:
+def eval_curve(curve: dict, p: float) -> float:
     """Evaluate one traffic curve at normalized phase ``p`` in [0, 1).
 
     A curve has a *base shape* (set by ``type``) and two optional *modifiers*
     that stack on top of any shape: ``spikes`` (superimposed random pulses) and
-    ``jitter`` (a noise band). Returns a QPS value clamped to [0, max_val].
+    ``jitter`` (a noise band). Returns a non-negative QPS value with no upper
+    cap -- the curve's own ``base``/``amplitude`` (q/s) set its magnitude.
     Unknown fields are ignored and sensible defaults are applied so
     partially-specified curves still work.
     """
@@ -341,6 +346,28 @@ def eval_curve(curve: dict, p: float, max_val: float) -> float:
         # Mirror of "day": low first, high for the trailing `duty` fraction.
         duty = float(curve.get("duty", 0.5) or 0.0)
         v = base + amp if ph >= (1.0 - duty) else base
+    elif ctype == "pulses":
+        # Explicit multi-spike timeline. ``pulses`` is a list of rectangular
+        # spikes, each with its own start ``at`` and duration ``dur`` (both in
+        # SECONDS within the period) and height ``amp`` (q/s, on top of ``base``).
+        # Lets you script N independent spikes — ramp traffic up and back down a
+        # set number of times — instead of the random ``spikes`` modifier where
+        # every pulse is randomly placed and identically sized.
+        per = float(curve.get("period", 0.0) or 0.0) or 60.0
+        t = ph * per  # seconds elapsed into the current period
+        v = base
+        for pl in (curve.get("pulses") or []):
+            dur = float(pl.get("dur", 0.0) or 0.0)
+            if dur <= 0:
+                continue
+            at = float(pl.get("at", 0.0) or 0.0)
+            # Seconds since this pulse's start, wrapped into the period so a pulse
+            # whose tail runs past the period boundary resumes at the start. The
+            # double-mod normalizes to [0, per) identically to the JS mirror,
+            # whose ``%`` would otherwise return a negative remainder.
+            local = ((t - at) % per + per) % per
+            if local < dur:
+                v += float(pl.get("amp", 0.0) or 0.0)
     else:  # "constant" and any unknown type
         v = base
 
@@ -371,10 +398,10 @@ def eval_curve(curve: dict, p: float, max_val: float) -> float:
         r = _hash01(seed ^ 0x5BD1E995, bucket)
         v *= 1.0 + jit * (r - 0.5) * 2.0
 
-    return max(0.0, min(v, max_val))
+    return max(0.0, v)
 
 
-async def run_scenario_driver(control: dict, max_qps: float, stop_event: asyncio.Event) -> None:
+async def run_scenario_driver(control: dict, stop_event: asyncio.Event) -> None:
     """Continuously project the active scenario's curves onto ``control["rates"]``.
 
     Idle (writes nothing) unless a scenario is playing, so the QPS sliders keep
@@ -414,7 +441,7 @@ async def run_scenario_driver(control: dict, max_qps: float, stop_event: asyncio
                     if fid in rates:
                         eff = eff_period(curve)
                         p = (elapsed % eff) / eff if scn["loop"] else min(elapsed / eff, 1.0)
-                        rates[fid] = eval_curve(curve, p, max_qps)
+                        rates[fid] = eval_curve(curve, p)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=TICK_SEC)
             break
@@ -473,7 +500,7 @@ async def handle_config(request: web.Request) -> web.Response:
         "model": app["args"].model,
         "capacity": app["args"].capacity,
         "max_concurrency": app["args"].max_concurrency,
-        "max_qps": app["args"].max_qps,
+        "max_qps": app["control"]["max_qps"],
         "mode": app["control"]["mode"],
         "tenants": [
             {"fairness_id": t.fairness_id, "objective": t.inference_objective, "priority": t.priority}
@@ -615,7 +642,9 @@ async def handle_set_qps(request: web.Request) -> web.Response:
     except (TypeError, ValueError):
         return web.json_response({"error": "target must be a number"}, status=400)
 
-    target = max(0.0, min(target, float(app["args"].max_qps)))
+    # No upper cap -- the dialed-in rate is whatever the UI sends (its slider
+    # range auto-sizes to the setup client-side).
+    target = max(0.0, target)
     rates[fid] = target
     return web.json_response({"fairness_id": fid, "target": target})
 
@@ -901,6 +930,10 @@ async def on_startup(app: web.Application) -> None:
     # the other mode's dialed-in values; `mode` selects which one is active.
     control: dict = {
         "mode": "concurrency",
+        # Nominal QPS scale (from --max-qps). No longer a cap: it only seeds the
+        # client's default curve shapes and the floor of the auto-sizing slider
+        # range. Nothing clamps rates to it.
+        "max_qps": float(args.max_qps),
         "targets": {t.fairness_id: 0 for t in tenants},
         "rates": {t.fairness_id: 0.0 for t in tenants},
         # Active scenario state (see run_scenario_driver). `curves` maps
@@ -953,7 +986,7 @@ async def on_startup(app: web.Application) -> None:
     ]
     pruner = asyncio.create_task(prune_loop(metrics, tenants, MAX_BUFFER_WINDOW, control, stop_event))
     scenario_driver = asyncio.create_task(
-        run_scenario_driver(control, float(args.max_qps), stop_event)
+        run_scenario_driver(control, stop_event)
     )
 
     app["metrics"] = metrics
@@ -998,7 +1031,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0", help="Web UI bind host.")
     parser.add_argument("--port", type=int, default=8080, help="Web UI port.")
     parser.add_argument("--max-concurrency", dest="max_concurrency", type=int, default=32, help="Upper bound for the concurrency sliders.")
-    parser.add_argument("--max-qps", dest="max_qps", type=float, default=2.0, help="Upper bound for the QPS sliders.")
+    parser.add_argument("--max-qps", dest="max_qps", type=float, default=2.0, help="Nominal QPS scale: seeds default curve shapes and the QPS sliders' starting range (not a cap).")
     return parser.parse_args()
 
 
