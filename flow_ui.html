@@ -719,7 +719,7 @@ const testStatus = document.getElementById('test-status');
 const TEST_EXPLANATIONS = {
   'test2': '<strong>Goal:</strong> Prove premium stays fast when standard saturates.<br><strong>Phases:</strong> Baseline (8+8) → Standard saturates (8+32) → Both saturate (16+32) → Recovery<br><strong>Success:</strong> Premium stays ~200-500ms in phase 2, standard spikes to 1-2s+',
   'test3': '<strong>Goal:</strong> Verify EPP round-robins fairly between tenants at same priority.<br><strong>Phases:</strong> Equal (8+8+0) → Premium-A monopolizes? (24+4+4) → Standard heavy<br><strong>Success:</strong> Premium-A with 24 requests doesn\'t starve Premium-B/C with 4 each - all get fair share of slots',
-  'test4': '<strong>Goal:</strong> Validate requests expire after TTL when queue saturates.<br><strong>Phases:</strong> Send 32 premium (2x capacity) → Cooldown<br><strong>Success:</strong> 503 responses for requests exceeding TTL, queue doesn\'t grow unbounded',
+  'test4': '<strong>Goal:</strong> Validate requests expire after TTL when queue saturates.<br><strong>Phases:</strong> Send 64 premium (4x capacity) → Cooldown<br><strong>Success:</strong> 503 responses for requests exceeding TTL (1s), queue doesn\'t grow unbounded',
   'test5': '<strong>Goal:</strong> Verify hard capacity limits are enforced.<br><strong>Phases:</strong> Send 60 premium + 10 batch (way over limit) → Cooldown<br><strong>Success:</strong> 429 responses when maxRequests exceeded',
   'test6': '<strong>Goal:</strong> Verify routing considers prefix cache hits for optimal placement.<br><strong>Phases:</strong> Warmup → Steady load → Cooldown<br><strong>Success:</strong> Requests routed to pods with matching cache, lower TTFT for cache hits',
   'test7': '<strong>Goal:</strong> Ensure high priority bypasses low priority floods.<br><strong>Phases:</strong> Flood 50 standard → 5 premium arrives → Cooldown<br><strong>Success:</strong> Premium bypasses standard queue, low TTFT despite saturation',
@@ -790,7 +790,7 @@ const TEST_SCENARIOS = {
     name: 'Test 4: TTL Expiration',
     duration: 30000,
     phases: [
-      { time: 0, premium: 32, standard: 0, desc: 'Overload: 32 premium (exceeds capacity)' },
+      { time: 0, premium: 64, standard: 0, desc: 'Overload: 64 premium (4x capacity)' },
       { time: 20000, premium: 0, standard: 0, desc: 'Cooldown (all stop)' }
     ]
   },
