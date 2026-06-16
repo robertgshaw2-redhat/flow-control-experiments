@@ -57,13 +57,30 @@ from client import LoadGenerator, MetricsCollector, Tenant
 
 def build_tenants() -> List[Tenant]:
     return [
+        # Priority 100 - Premium tier with 3 tenants for fairness testing
         Tenant(
-            fairness_id="premium-tenant",
+            fairness_id="premium-tenant-a",
             inference_objective="premium-traffic",
             priority=100,
         ),
         Tenant(
-            fairness_id="standard-tenant",
+            fairness_id="premium-tenant-b",
+            inference_objective="premium-traffic",
+            priority=100,
+        ),
+        Tenant(
+            fairness_id="premium-tenant-c",
+            inference_objective="premium-traffic",
+            priority=100,
+        ),
+        # Priority 0 - Standard tier with 2 tenants for fairness testing
+        Tenant(
+            fairness_id="standard-tenant-a",
+            inference_objective="standard-traffic",
+            priority=0,
+        ),
+        Tenant(
+            fairness_id="standard-tenant-b",
             inference_objective="standard-traffic",
             priority=0,
         ),

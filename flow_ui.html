@@ -114,7 +114,12 @@
         <button data-mode="concurrency" class="active" style="flex:1" title="Closed loop: hold N requests in flight per flow.">Concurrency</button>
         <button data-mode="qps" style="flex:1" title="Open loop: issue N requests per second per flow, regardless of how many are already in flight.">Queries / sec</button>
       </div>
-      <h2 id="control-title">Concurrency</h2>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h2 id="control-title" style="margin:0;">Concurrency</h2>
+        <button id="tenant-view-toggle" style="font-size:11px; padding:4px 8px;" title="Toggle between simple (2 tiers) and detailed (5 tenants) view">
+          Simple View
+        </button>
+      </div>
       <div id="tenants"></div>
 
       <!-- Automated Test Runner -->
@@ -146,6 +151,14 @@
             <option value="burst">Demo: Burst Spike</option>
           </optgroup>
         </select>
+
+        <!-- Test Explanation (collapsible) -->
+        <div id="test-explanation" style="display:none; margin:10px 0; padding:10px; background:rgba(255,255,255,0.03); border-radius:4px; border-left:3px solid var(--accent);">
+          <div style="font-size:11px; line-height:1.5; color:var(--muted);">
+            <div id="test-explanation-content"></div>
+          </div>
+        </div>
+
         <button id="run-test-btn" disabled style="width:100%; margin-bottom:8px;">▶ Run Selected Test</button>
         <button id="stop-test-btn" disabled style="width:100%; background:var(--red); border-color:var(--red);">⏹ Stop Test</button>
         <div id="test-status" style="margin-top:8px; font-size:11px; color:var(--muted); min-height:20px;"></div>
@@ -210,9 +223,7 @@
       <div class="chart-wrap">
         <canvas id="chart" height="340"></canvas>
       </div>
-      <div class="legend">
-        <span><i style="background:var(--premium)"></i>premium-tenant</span>
-        <span><i style="background:var(--standard)"></i>standard-tenant</span>
+      <div class="legend" id="chart-legend">
         <span id="y-label" style="margin-left:auto;color:var(--muted)"></span>
       </div>
 
@@ -223,11 +234,19 @@
 <script>
 "use strict";
 
-const TENANT_COLORS = { "premium-tenant": getCSS("--premium"), "standard-tenant": getCSS("--standard") };
+// Define distinct colors for each tenant (shades of green/teal for premium, shades of orange/yellow for standard)
+const TENANT_COLORS = {
+  "premium-tenant-a": "#00e5a0",   // bright mint green
+  "premium-tenant-b": "#00b88f",   // medium teal
+  "premium-tenant-c": "#20ffc0",   // light cyan
+  "standard-tenant-a": "#ffaa33",  // bright orange
+  "standard-tenant-b": "#ff8800",  // deep orange
+};
 function getCSS(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
 
 let CONFIG = null;
 let mode = "concurrency";   // "concurrency" | "qps"
+let tenantView = "simple";  // "simple" | "detailed"
 // Dialed-in slider values are kept per mode so toggling preserves both.
 const values = { concurrency: {}, qps: {} };
 let metric = "p95_ttft";
@@ -286,6 +305,14 @@ async function init() {
     b.addEventListener("click", () => setMode(b.dataset.mode));
   });
 
+  // tenant view toggle (Simple <-> Detailed)
+  document.getElementById("tenant-view-toggle").addEventListener("click", () => {
+    tenantView = tenantView === "simple" ? "detailed" : "simple";
+    document.getElementById("tenant-view-toggle").textContent =
+      tenantView === "simple" ? "Simple View" : "Detailed View";
+    buildTenantControls();
+  });
+
   // metric selector (dropdown)
   document.getElementById("metric-sel").addEventListener("change", (e) => {
     metric = e.target.value;
@@ -301,6 +328,17 @@ async function init() {
   document.getElementById("zero-btn").addEventListener("click", () => {
     for (const t of CONFIG.tenants) setTarget(t.fairness_id, 0, true);
   });
+
+  // Build dynamic legend
+  const legendEl = document.getElementById("chart-legend");
+  const yLabel = document.getElementById("y-label");
+  legendEl.innerHTML = '';
+  for (const t of CONFIG.tenants) {
+    const span = document.createElement('span');
+    span.innerHTML = `<i style="background:${TENANT_COLORS[t.fairness_id]}"></i>${t.fairness_id}`;
+    legendEl.appendChild(span);
+  }
+  legendEl.appendChild(yLabel);
 
   window.addEventListener("resize", draw);
   draw();
@@ -334,32 +372,88 @@ function buildTenantControls() {
   const max = m.max();
   const root = document.getElementById("tenants");
   root.innerHTML = "";
-  // premium first (higher priority on top, like the CLI dashboard)
-  const tenants = [...CONFIG.tenants].sort((a, b) => b.priority - a.priority);
-  for (const t of tenants) {
-    const cls = t.fairness_id === "premium-tenant" ? "premium" : "standard";
-    const cur = values[mode][t.fairness_id] || 0;
-    const el = document.createElement("div");
-    el.className = "tenant " + cls;
-    el.innerHTML = `
-      <div class="row">
-        <div><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>
-          <span class="name">${t.fairness_id}</span>
-          <span class="obj">· ${t.objective} · pri ${t.priority}</span>
+
+  if (tenantView === "simple") {
+    // Simple view: just "Premium" and "Standard" aggregated controls
+    buildSimpleTenantControl(root, "Premium", "premium", CONFIG.tenants.filter(t => t.priority >= 100), m, max);
+    buildSimpleTenantControl(root, "Standard", "standard", CONFIG.tenants.filter(t => t.priority < 100), m, max);
+  } else {
+    // Detailed view: show all individual tenants grouped by priority
+    const tenants = [...CONFIG.tenants].sort((a, b) => b.priority - a.priority);
+    let lastPriority = null;
+    for (const t of tenants) {
+      // Add priority header when priority changes
+      if (t.priority !== lastPriority) {
+        const header = document.createElement("div");
+        header.style.cssText = "margin-top: 16px; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;";
+        header.textContent = `Priority ${t.priority}`;
+        root.appendChild(header);
+        lastPriority = t.priority;
+      }
+
+      const cls = t.priority >= 100 ? "premium" : "standard";
+      const cur = values[mode][t.fairness_id] || 0;
+      const el = document.createElement("div");
+      el.className = "tenant " + cls;
+      el.innerHTML = `
+        <div class="row">
+          <div><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>
+            <span class="name">${t.fairness_id}</span>
+            <span class="obj">· ${t.objective}</span>
+          </div>
+          <span class="val" id="val-${t.fairness_id}">${m.fmt(cur)}</span>
         </div>
-        <span class="val" id="val-${t.fairness_id}">${m.fmt(cur)}</span>
-      </div>
-      <input type="range" min="0" max="${max}" step="${m.step}" value="${cur}"
-             id="slider-${t.fairness_id}" />
-      <div class="ticks"><span>0</span><span>${m.fmt(max/2)}</span><span>${m.fmt(max)}</span></div>
-    `;
-    root.appendChild(el);
-    const slider = el.querySelector("input");
-    slider.addEventListener("input", () => {
-      document.getElementById("val-" + t.fairness_id).textContent = m.fmt(+slider.value);
-      setTarget(t.fairness_id, +slider.value, false);
-    });
+        <input type="range" min="0" max="${max}" step="${m.step}" value="${cur}"
+               id="slider-${t.fairness_id}" />
+        <div class="ticks"><span>0</span><span>${m.fmt(max/2)}</span><span>${m.fmt(max)}</span></div>
+      `;
+      root.appendChild(el);
+      const slider = el.querySelector("input");
+      slider.addEventListener("input", () => {
+        document.getElementById("val-" + t.fairness_id).textContent = m.fmt(+slider.value);
+        setTarget(t.fairness_id, +slider.value, false);
+      });
+    }
   }
+}
+
+function buildSimpleTenantControl(root, label, cls, tenants, m, max) {
+  if (tenants.length === 0) return;
+
+  // Calculate aggregate current value across all tenants in this tier
+  const aggregate = tenants.reduce((sum, t) => sum + (values[mode][t.fairness_id] || 0), 0);
+
+  const color = cls === "premium" ? getCSS("--premium") : getCSS("--standard");
+  const el = document.createElement("div");
+  el.className = "tenant " + cls;
+  el.innerHTML = `
+    <div class="row">
+      <div><span class="dot" style="background:${color}"></span>
+        <span class="name">${label}</span>
+        <span class="obj">· ${tenants.length} tenant${tenants.length > 1 ? 's' : ''} · pri ${tenants[0].priority}</span>
+      </div>
+      <span class="val" id="val-${cls}">${m.fmt(aggregate)}</span>
+    </div>
+    <input type="range" min="0" max="${max}" step="${m.step}" value="${aggregate}"
+           id="slider-${cls}" />
+    <div class="ticks"><span>0</span><span>${m.fmt(max/2)}</span><span>${m.fmt(max)}</span></div>
+  `;
+  root.appendChild(el);
+
+  const slider = el.querySelector("input");
+  slider.addEventListener("input", () => {
+    const newTotal = +slider.value;
+    document.getElementById("val-" + cls).textContent = m.fmt(newTotal);
+
+    // Distribute evenly across all tenants in this tier
+    const perTenant = Math.floor(newTotal / tenants.length);
+    const remainder = newTotal % tenants.length;
+
+    tenants.forEach((t, i) => {
+      const target = perTenant + (i < remainder ? 1 : 0);
+      setTarget(t.fairness_id, target, false);
+    });
+  });
 }
 
 // Post the dialed-in value to the endpoint for the current mode, debounced a
@@ -471,10 +565,45 @@ function latClass(v) { if (v === null || v === undefined) return ""; return v < 
 function renderCards(data) {
   const root = document.getElementById("cards");
   const qps = data.mode === "qps";
-  const tenants = [...data.tenants].sort((a, b) => b.priority - a.priority);
+  let tenants = [...data.tenants].sort((a, b) => b.priority - a.priority);
+
+  // In simple view, aggregate metrics by priority tier
+  if (tenantView === "simple") {
+    const premiumTenants = tenants.filter(t => t.priority === 100);
+    const standardTenants = tenants.filter(t => t.priority === 0);
+
+    const aggregateTier = (tierTenants, name, color) => {
+      if (tierTenants.length === 0) return null;
+      return {
+        fairness_id: name,
+        priority: tierTenants[0].priority,
+        med_ttft: tierTenants.reduce((sum, t) => sum + (t.med_ttft || 0), 0) / tierTenants.length,
+        p95_ttft: Math.max(...tierTenants.map(t => t.p95_ttft || 0)),
+        max_ttft: Math.max(...tierTenants.map(t => t.max_ttft || 0)),
+        med_total: tierTenants.reduce((sum, t) => sum + (t.med_total || 0), 0) / tierTenants.length,
+        p95_total: Math.max(...tierTenants.map(t => t.p95_total || 0)),
+        max_total: Math.max(...tierTenants.map(t => t.max_total || 0)),
+        active: tierTenants.reduce((sum, t) => sum + t.active, 0),
+        target: tierTenants.reduce((sum, t) => sum + t.target, 0),
+        qps: tierTenants.reduce((sum, t) => sum + t.qps, 0),
+        target_qps: tierTenants.reduce((sum, t) => sum + t.target_qps, 0),
+        s_200: tierTenants.reduce((sum, t) => sum + t.s_200, 0),
+        s_429: tierTenants.reduce((sum, t) => sum + t.s_429, 0),
+        s_503: tierTenants.reduce((sum, t) => sum + t.s_503, 0),
+        s_err: tierTenants.reduce((sum, t) => sum + t.s_err, 0),
+        color: color
+      };
+    };
+
+    tenants = [
+      aggregateTier(premiumTenants, "Premium", "#00e5a0"),
+      aggregateTier(standardTenants, "Standard", "#ffaa33")
+    ].filter(Boolean);
+  }
+
   root.innerHTML = tenants.map(t => `
     <div class="card">
-      <div class="ttl"><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>${t.fairness_id}</div>
+      <div class="ttl"><span class="dot" style="background:${t.color || TENANT_COLORS[t.fairness_id]}"></span>${t.fairness_id}</div>
       <div class="metrics">
         <div class="m"><b>med TTFT</b><span class="${latClass(t.med_ttft)}">${fmt(t.med_ttft,"s")}</span></div>
         <div class="m"><b>p95 TTFT</b><span class="${latClass(t.p95_ttft)}">${fmt(t.p95_ttft,"s")}</span></div>
@@ -586,8 +715,35 @@ const runTestBtn = document.getElementById('run-test-btn');
 const stopTestBtn = document.getElementById('stop-test-btn');
 const testStatus = document.getElementById('test-status');
 
+// Test explanations
+const TEST_EXPLANATIONS = {
+  'test2': '<strong>Goal:</strong> Prove premium stays fast when standard saturates.<br><strong>Phases:</strong> Baseline (8+8) → Standard saturates (8+32) → Both saturate (16+32) → Recovery<br><strong>Success:</strong> Premium stays ~200-500ms in phase 2, standard spikes to 1-2s+',
+  'test3': '<strong>Goal:</strong> Verify EPP round-robins fairly between tenants at same priority.<br><strong>Phases:</strong> Equal (8+8+0) → Premium-A monopolizes? (24+4+4) → Standard heavy<br><strong>Success:</strong> Premium-A with 24 requests doesn\'t starve Premium-B/C with 4 each - all get fair share of slots',
+  'test4': '<strong>Goal:</strong> Validate requests expire after TTL when queue saturates.<br><strong>Phases:</strong> Send 32 premium (2x capacity) → Cooldown<br><strong>Success:</strong> 503 responses for requests exceeding TTL, queue doesn\'t grow unbounded',
+  'test5': '<strong>Goal:</strong> Verify hard capacity limits are enforced.<br><strong>Phases:</strong> Send 60 premium + 10 batch (way over limit) → Cooldown<br><strong>Success:</strong> 429 responses when maxRequests exceeded',
+  'test6': '<strong>Goal:</strong> Verify routing considers prefix cache hits for optimal placement.<br><strong>Phases:</strong> Warmup → Steady load → Cooldown<br><strong>Success:</strong> Requests routed to pods with matching cache, lower TTFT for cache hits',
+  'test7': '<strong>Goal:</strong> Ensure high priority bypasses low priority floods.<br><strong>Phases:</strong> Flood 50 standard → 5 premium arrives → Cooldown<br><strong>Success:</strong> Premium bypasses standard queue, low TTFT despite saturation',
+  'test10': '<strong>Goal:</strong> Validate interactive workloads aren\'t delayed by batch processing.<br><strong>Phases:</strong> 20 batch jobs (long prompts) → 16 interactive premium → Cooldown<br><strong>Success:</strong> Interactive not blocked by long-running batch',
+  'test11': '<strong>Goal:</strong> Compare routing with different scoring strategies.<br><strong>Phases:</strong> Baseline load → Cooldown<br><strong>Success:</strong> Observe trade-offs between queue depth and cache hit optimization',
+  'test12': '<strong>Goal:</strong> Validate queueDepthThreshold=1 forces strict queuing.<br><strong>Phases:</strong> Baseline load → Cooldown<br><strong>Success:</strong> No request bypasses queue, saturation detection triggers earlier',
+  'saturation': '<strong>Demo:</strong> Progressive load increase for stakeholder presentations.<br><strong>Phases:</strong> Light (4+4) → At capacity (8+8) → Moderate (12+12) → Heavy (16+16) → Cool down<br><strong>Shows:</strong> System behavior under increasing load',
+  'burst': '<strong>Demo:</strong> Traffic spike resilience demonstration.<br><strong>Phases:</strong> Steady (8+8) → BURST! Standard spikes to 32 → Recovery<br><strong>Shows:</strong> How premium handles sudden standard surge'
+};
+
 testScenarioSelect.addEventListener('change', () => {
-  runTestBtn.disabled = !testScenarioSelect.value || testRunning;
+  const selectedTest = testScenarioSelect.value;
+  runTestBtn.disabled = !selectedTest || testRunning;
+
+  // Show/hide explanation
+  const explanationDiv = document.getElementById('test-explanation');
+  const explanationContent = document.getElementById('test-explanation-content');
+
+  if (selectedTest && TEST_EXPLANATIONS[selectedTest]) {
+    explanationContent.innerHTML = TEST_EXPLANATIONS[selectedTest];
+    explanationDiv.style.display = 'block';
+  } else {
+    explanationDiv.style.display = 'none';
+  }
 });
 
 const TEST_SCENARIOS = {
@@ -605,9 +761,9 @@ const TEST_SCENARIOS = {
     name: 'Test 3: Fairness Validation',
     duration: 90000, // 1.5 minutes
     phases: [
-      { time: 0, premium: 16, standard: 16, desc: 'Equal load (16+16)' },
-      { time: 30000, premium: 32, standard: 8, desc: 'Premium heavy (32+8)' },
-      { time: 60000, premium: 8, standard: 32, desc: 'Standard heavy (8+32)' }
+      { time: 0, targets: {'premium-tenant-a': 8, 'premium-tenant-b': 8, 'premium-tenant-c': 0, 'standard-tenant-a': 8, 'standard-tenant-b': 8}, desc: 'Equal within tiers (8+8+0 premium, 8+8 standard)' },
+      { time: 30000, targets: {'premium-tenant-a': 24, 'premium-tenant-b': 4, 'premium-tenant-c': 4, 'standard-tenant-a': 4, 'standard-tenant-b': 4}, desc: 'Premium-A monopolizes? (24+4+4 vs 4+4)' },
+      { time: 60000, targets: {'premium-tenant-a': 4, 'premium-tenant-b': 4, 'premium-tenant-c': 4, 'standard-tenant-a': 16, 'standard-tenant-b': 16}, desc: 'Standard heavy (4+4+4 vs 16+16)' }
     ]
   },
   'saturation': {
@@ -718,9 +874,10 @@ async function runAutomatedTest(scenarioKey) {
       testScenarioSelect.disabled = false;
       testStatus.innerHTML = `<span style="color:var(--muted)">✓ Test completed</span>`;
 
-      // Set to zero
-      setTenantTarget('premium-tenant', 0);
-      setTenantTarget('standard-tenant', 0);
+      // Set all tenants to zero
+      for (const t of CONFIG.tenants) {
+        setTenantTarget(t.fairness_id, 0);
+      }
       return;
     }
 
@@ -730,9 +887,20 @@ async function runAutomatedTest(scenarioKey) {
       currentPhaseIndex = scenario.phases.indexOf(nextPhase);
       const phase = scenario.phases[currentPhaseIndex];
 
-      // Apply phase settings
-      setTenantTarget('premium-tenant', phase.premium);
-      setTenantTarget('standard-tenant', phase.standard);
+      // Apply phase settings (support both old and new format)
+      if (phase.targets) {
+        // New format: explicit per-tenant targets
+        for (const [fid, target] of Object.entries(phase.targets)) {
+          setTenantTarget(fid, target);
+        }
+      } else {
+        // Old format: aggregate premium/standard
+        setTenantTarget('premium-tenant-a', phase.premium || 0);
+        setTenantTarget('premium-tenant-b', 0);
+        setTenantTarget('premium-tenant-c', 0);
+        setTenantTarget('standard-tenant-a', phase.standard || 0);
+        setTenantTarget('standard-tenant-b', 0);
+      }
 
       const remaining = Math.ceil((scenario.duration - elapsed) / 1000);
       testStatus.innerHTML = `<span style="color:var(--accent)">${phase.desc}</span><br><span style="color:var(--muted)">${remaining}s remaining</span>`;
@@ -741,8 +909,14 @@ async function runAutomatedTest(scenarioKey) {
 
   // Start first phase immediately
   const firstPhase = scenario.phases[0];
-  setTenantTarget('premium-tenant', firstPhase.premium);
-  setTenantTarget('standard-tenant', firstPhase.standard);
+  if (firstPhase.targets) {
+    for (const [fid, target] of Object.entries(firstPhase.targets)) {
+      setTenantTarget(fid, target);
+    }
+  } else {
+    setTenantTarget('premium-tenant-a', firstPhase.premium || 0);
+    setTenantTarget('standard-tenant-a', firstPhase.standard || 0);
+  }
 }
 
 function setTenantTarget(fairnessId, value) {
@@ -775,8 +949,9 @@ stopTestBtn.addEventListener('click', () => {
   testStatus.innerHTML = '<span style="color:var(--standard)">⏹ Test stopped</span>';
 
   // Set to zero
-  setTenantTarget('premium-tenant', 0);
-  setTenantTarget('standard-tenant', 0);
+  for (const t of CONFIG.tenants) {
+    setTenantTarget(t.fairness_id, 0);
+  }
 });
 
 // EPP Config loading
