@@ -193,8 +193,8 @@ class LoadGenerator:
         self.model_name = model_name
         self.session = session
         self.base_phrase = "Flow control demo payload."
-        self.isl = 5000
-        self.osl = 100
+        self.isl = 4000
+        self.osl = 200
         self.tokens_per_phrase = 5
 
         # Every in-flight request task, tracked so main() can drain/cancel them.

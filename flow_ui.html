@@ -77,6 +77,10 @@
   .seg button { border: none; border-radius: 0; border-right: 1px solid var(--line); }
   .seg button:last-child { border-right: none; }
   .seg button.active { background: var(--accent); color: #04121f; font-weight: 600; }
+  /* Two labeled metric groups (TTFT vs end-to-end) shown side by side. */
+  .metric-seg-wrap { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .seg-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .seg-label:not(:first-child) { margin-left: 10px; }
 
   /* Chart */
   .chart-wrap { position: relative; }
@@ -92,21 +96,137 @@
   .metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 12px; }
   .metrics .m { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
   .metrics .m b { color: var(--muted); font-weight: 500; }
+  /* Section header inside a stat card — separates TTFT from end-to-end. */
+  .metrics .grp { grid-column: 1 / -1; font-size: 9.5px; font-weight: 700; text-transform: uppercase;
+                  letter-spacing: .05em; color: var(--muted); border-bottom: 1px solid var(--line);
+                  padding-bottom: 3px; margin-top: 5px; }
+  .metrics .grp:first-child { margin-top: 0; }
   .codes { margin-top: 9px; display: flex; gap: 12px; font-size: 11px; font-variant-numeric: tabular-nums; }
   .codes .ok { color: var(--premium); } .codes .warn { color: var(--standard); } .codes .bad { color: var(--red); }
   .good { color: var(--premium); } .mid { color: var(--standard); } .hot { color: var(--red); }
   .disconnected { color: var(--red); }
+
+  /* Top-level view tabs */
+  .nav { display: inline-flex; gap: 6px; margin-bottom: 16px; }
+  .nav button { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 16px; font-weight: 600; color: var(--muted); }
+  .nav button.active { background: var(--accent); color: #04121f; border-color: var(--accent); }
+  [hidden] { display: none !important; }
+
+  /* Scenario builder */
+  .presets { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 8px; }
+  .preset { text-align: left; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; color: var(--txt); font: inherit; }
+  .preset:hover { border-color: var(--accent); }
+  .preset.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .preset .pname { font-weight: 600; margin-bottom: 3px; }
+  .preset .pdesc { color: var(--muted); font-size: 11px; }
+  .scn-tenant { margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .scn-tenant:last-child { border-bottom: none; }
+  .scn-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 7px 0; }
+  .scn-row label { color: var(--muted); font-size: 12px; }
+  .scn-row input[type=number], .scn-row input[type=text] {
+    width: 96px; background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 7px; font: inherit; font-variant-numeric: tabular-nums;
+  }
+  .scn-row input[type=text] { width: auto; flex: 1; }
+  .scn-row select { width: 150px; }
+  /* "pulses" type — explicit multi-spike timeline editor */
+  .scn-pulses { flex-direction: column; align-items: stretch; gap: 7px; }
+  .scn-pulses > label { color: var(--muted); font-size: 12px; }
+  .pulse-list { display: flex; flex-direction: column; gap: 5px; }
+  .pulse-empty { color: var(--muted); font-size: 11px; font-style: italic; }
+  .pulse-row { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  .pulse-row .pn { width: 26px; font-variant-numeric: tabular-nums; }
+  .pulse-row label { color: var(--muted); }
+  .pulse-row input[type=number] {
+    width: 56px; background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+    border-radius: 6px; padding: 3px 6px; font: inherit; font-variant-numeric: tabular-nums;
+  }
+  .pulse-row .u { color: var(--muted); font-size: 11px; }
+  .pulse-row button { padding: 2px 7px; margin-left: auto; }
+  .pulse-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 2px; }
+  .pulse-tools button { padding: 4px 9px; font-size: 12px; }
+  .pulse-gen { color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+  .pulse-tools .pulse-n,
+  .pulse-tools .pulse-gen input[type=number] {
+    width: 48px; background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+    border-radius: 6px; padding: 3px 6px; font: inherit; font-variant-numeric: tabular-nums;
+  }
+  .pulse-gen .u { font-size: 11px; }
+  .play-row { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
+  .play-row button.primary { background: var(--premium); color: #04121f; font-weight: 700; border-color: var(--premium); }
+  .play-row button.primary:hover { filter: brightness(1.05); border-color: var(--premium); }
+  .scn-status { color: var(--muted); font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
+  button:disabled, input:disabled, select:disabled { opacity: .45; cursor: not-allowed; }
+  button:disabled:hover { border-color: var(--line); }
+
+  /* Setup vs Running mode banner for the scenario builder */
+  .mode-banner {
+    display: flex; align-items: center; gap: 11px;
+    padding: 10px 13px; border-radius: 10px; margin-bottom: 16px;
+    border: 1px solid var(--line); background: var(--panel2);
+  }
+  .mode-banner .badge {
+    font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 6px; flex-shrink: 0;
+  }
+  .mode-banner .mtext { font-size: 12px; color: var(--muted); line-height: 1.35; }
+  .mode-banner.setup { border-color: rgba(251,189,35,.45); background: rgba(251,189,35,.08); }
+  .mode-banner.setup .badge { background: var(--standard); color: #04121f; }
+  .mode-banner.running { border-color: rgba(54,211,153,.5); background: rgba(54,211,153,.10); }
+  .mode-banner.running .badge { background: var(--premium); color: #04121f; }
+  .mode-banner.paused { border-color: rgba(96,165,250,.5); background: rgba(96,165,250,.10); }
+  .mode-banner.paused .badge { background: var(--accent); color: #04121f; }
+
+  /* While a scenario runs, the whole setup is locked (read-only) */
+  #scn-builder-panel.locked #presets,
+  #scn-builder-panel.locked #saved,
+  #scn-builder-panel.locked #scn-editors,
+  #scn-builder-panel.locked .scn-row { opacity: .5; pointer-events: none; }
+
+  /* Experiment bar — shows experiment status and hosts the Run / Reset controls */
+  .exp-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 16px; margin-bottom: 16px;
+  }
+  .exp-bar.running { border-color: rgba(96,165,250,.55); background: rgba(96,165,250,.08); }
+  .exp-bar .exp-state { font-weight: 700; }
+  .exp-bar.running .exp-state { color: var(--accent); }
+  .exp-bar .exp-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .exp-actions { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
+  .exp-actions input[type=text] {
+    background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 9px; font: inherit; width: 170px;
+  }
+  .exp-actions button.primary { background: var(--accent); color: #04121f; font-weight: 700; border-color: var(--accent); }
+  .exp-actions button.primary:hover { filter: brightness(1.05); border-color: var(--accent); }
+
+  /* Two-column stat cards in the scenarios view: moving avg vs. experiment */
+  #scn-cards { grid-template-columns: 1fr; }
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 620px) { .twocol { grid-template-columns: 1fr; } }
+  .subcard { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+  .subcard.muted-col { opacity: .55; }
+  .col-h { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 9px; font-weight: 700; }
+  .col-h .accent { color: var(--accent); }
+  .no-exp { color: var(--muted); font-size: 12px; padding: 10px 0; }
 </style>
 </head>
 <body>
   <h1 id="page-title">EPP Flow Control — Live</h1>
   <div class="sub">Target <code id="target-url">…</code> · model <code id="model-name">…</code>. <span id="sub-hint">Drag the sliders to change how many requests each flow holds in flight, and watch latency move.</span></div>
 
+  <div class="nav">
+    <button data-view="live" class="active">Live control</button>
+    <button data-view="scenarios">Scenarios</button>
+  </div>
+
   <div id="banner" class="banner healthy">
     <span id="banner-state">HEALTHY</span>
     <span class="cap" id="banner-cap"></span>
   </div>
 
+  <div id="view-live">
   <div class="grid">
     <!-- LEFT: controls -->
     <div class="panel">
@@ -114,83 +234,33 @@
         <button data-mode="concurrency" class="active" style="flex:1" title="Closed loop: hold N requests in flight per flow.">Concurrency</button>
         <button data-mode="qps" style="flex:1" title="Open loop: issue N requests per second per flow, regardless of how many are already in flight.">Queries / sec</button>
       </div>
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <h2 id="control-title" style="margin:0;">Concurrency</h2>
-        <button id="tenant-view-toggle" style="font-size:11px; padding:4px 8px;" title="Toggle between simple (2 tiers) and detailed (5 tenants) view">
-          Simple View
-        </button>
-      </div>
+      <h2 id="control-title">Concurrency</h2>
       <div id="tenants"></div>
-
-      <!-- Automated Test Runner -->
-      <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--line);">
-        <h2 style="margin-bottom:10px;">🤖 Auto Test</h2>
-
-        <!-- Spike Mode Control -->
-        <div style="margin-bottom:12px;">
-          <label style="color:var(--muted); font-size:11px; display:block; margin-bottom:4px;">Traffic Pattern:</label>
-          <select id="spike-mode" style="width:100%; font-size:11px;">
-            <option value="sine" selected>Spiky (Sine Wave) - Recommended</option>
-            <option value="bursty">Bursty (Random Spikes)</option>
-            <option value="flat">Flat (No Variation)</option>
-          </select>
-          <div style="font-size:10px; color:var(--muted); margin-top:3px;">
-            Spiky traffic demonstrates flow control value by showing P95 variance
-          </div>
-        </div>
-
-        <select id="test-scenario" style="width:100%; margin-bottom:10px;">
-          <option value="">-- Select Test --</option>
-          <option value="test1">Test 1: GPU Consolidation</option>
-          <option value="test2">Test 2: Priority Differentiation</option>
-          <option value="test3">Test 3: Fairness Validation</option>
-          <option value="test4">Test 4: Priority Inversion Prevention</option>
-        </select>
-
-        <!-- Test Explanation (collapsible) -->
-        <div id="test-explanation" style="display:none; margin:10px 0; padding:10px; background:rgba(255,255,255,0.03); border-radius:4px; border-left:3px solid var(--accent);">
-          <div style="font-size:11px; line-height:1.5; color:var(--muted);">
-            <div id="test-explanation-content"></div>
-          </div>
-        </div>
-
-        <button id="run-test-btn" disabled style="width:100%; margin-bottom:8px;">▶ Run Selected Test</button>
-        <button id="stop-test-btn" disabled style="width:100%; background:var(--red); border-color:var(--red);">⏹ Stop Test</button>
-        <div id="test-status" style="margin-top:8px; font-size:11px; color:var(--muted); min-height:20px;"></div>
-      </div>
-
       <div style="margin-top:18px; display:flex; gap:10px;">
         <button id="reset-btn" title="Clear latency history & counters">Reset metrics</button>
         <button id="zero-btn" title="Set both flows to 0">Stop all</button>
-      </div>
-
-      <!-- EPP Configuration Display -->
-      <div style="margin-top:20px; border-top:1px solid var(--line); padding-top:16px;">
-        <h2 style="cursor:pointer; user-select:none;" id="config-toggle" title="Click to expand/collapse">
-          EPP Configuration <span id="config-arrow" style="font-size:10px;">▼</span>
-        </h2>
-        <div id="epp-config" style="display:none; font-size:11px; line-height:1.6;">
-          <div style="color:var(--muted); margin-bottom:8px;">Loading...</div>
-        </div>
       </div>
     </div>
 
     <!-- RIGHT: chart + cards -->
     <div class="panel">
       <div class="controls">
-        <label style="display:flex; align-items:center; gap:8px;">
-          <span style="color:var(--muted); font-size:12px;">Metric:</span>
-          <select id="metric-sel" style="flex:1; min-width:200px;">
-            <option value="p95_ttft" selected>P95 TTFT</option>
-            <option value="med_ttft">Median TTFT</option>
-            <option value="max_ttft">Max TTFT</option>
-            <option value="p95_total">P95 Total Latency</option>
-            <option value="med_total">Median Total Latency</option>
-            <option value="max_total">Max Total Latency</option>
-            <option value="p95_tpot">P95 TPOT (Time Per Output Token)</option>
-            <option value="med_tpot">Median TPOT</option>
-          </select>
-        </label>
+        <div class="metric-seg-wrap" id="metric-seg">
+          <span class="seg-label">TTFT</span>
+          <div class="seg">
+            <button data-metric="med_ttft">Median</button>
+            <button data-metric="p90_ttft">P90</button>
+            <button data-metric="p95_ttft" class="active">P95</button>
+            <button data-metric="max_ttft">Max</button>
+          </div>
+          <span class="seg-label">End-to-end</span>
+          <div class="seg">
+            <button data-metric="med_total">Median</button>
+            <button data-metric="p90_total">P90</button>
+            <button data-metric="p95_total">P95</button>
+            <button data-metric="max_total">Max</button>
+          </div>
+        </div>
         <label title="How much time the chart shows on the x-axis. Purely visual — does not change how points are computed.">Chart span
           <select id="span-sel">
             <option value="30">30s</option>
@@ -218,96 +288,116 @@
       <div class="chart-wrap">
         <canvas id="chart" height="340"></canvas>
       </div>
-      <div class="legend" id="chart-legend">
+      <div class="legend">
+        <span><i style="background:var(--premium)"></i>premium-tenant</span>
+        <span><i style="background:var(--standard)"></i>standard-tenant</span>
         <span id="y-label" style="margin-left:auto;color:var(--muted)"></span>
       </div>
 
       <div class="cards" id="cards"></div>
     </div>
   </div>
+  </div><!-- /view-live -->
+
+  <div id="view-scenarios" hidden>
+    <div class="exp-bar" id="exp-bar">
+      <div>
+        <div class="exp-state" id="exp-state">No experiment running</div>
+        <div class="exp-sub" id="exp-sub">Start an experiment to accumulate every metric across the whole run, alongside the moving averages. Independent of Play / Stop, which only drive the traffic curves.</div>
+      </div>
+      <div class="exp-actions">
+        <button id="scn-play" class="primary" title="Start a fresh experiment: lock the setup and drive these traffic curves while accumulating cumulative metrics from zero.">▶ Run</button>
+        <button id="scn-pause" title="Pause the run: stop the traffic and freeze the experiment's final results for review, keeping the charts on screen. Press Reset to edit again, or Run for a fresh experiment.">⏸ Pause</button>
+        <button id="scn-reset" title="Stop the run, clear the charts, and return to an editable setup.">↺ Reset</button>
+        <button id="exp-export-json" disabled title="Download the cumulative experiment results (all tenants, every percentile + status codes) and the scenario setup as a JSON file.">⤓ JSON</button>
+        <button id="exp-export-csv" disabled title="Download the cumulative experiment results as a CSV — one row per tenant, ready to drop into a spreadsheet.">⤓ CSV</button>
+      </div>
+    </div>
+    <div class="grid">
+      <!-- LEFT: scenario builder -->
+      <div class="panel builder-lock" id="scn-builder-panel">
+        <div class="mode-banner setup" id="scn-mode-banner">
+          <span class="badge" id="scn-mode-badge">Setup</span>
+          <span class="mtext" id="scn-mode-text">Build your scenario below, then press Run to start it.</span>
+        </div>
+        <h2>Preset scenarios</h2>
+        <div class="presets" id="presets"></div>
+        <h2 style="margin-top:18px;">Saved scenarios <span id="saved-empty" style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;">— none yet; build one and press Save</span></h2>
+        <div class="presets" id="saved"></div>
+        <h2 style="margin-top:18px;">Builder</h2>
+        <div class="scn-row"><label>Name</label><input type="text" id="scn-name" placeholder="My scenario" /></div>
+        <div class="scn-row"><label title="Time span shown in the charts on the right. The traffic plan and the measured latency share this window, so you can line them up in time. Each tenant's own cycle length is set per-tenant below.">Window (s)</label><input type="number" id="scn-window" min="10" max="300" step="5" value="60" /></div>
+        <div class="scn-row"><label title="Repeat the curve forever (uncheck to play it once and stop).">Loop continuously</label><input type="checkbox" id="scn-loop" checked /></div>
+        <div id="scn-editors"></div>
+        <div class="play-row">
+          <button id="scn-save" title="Save the current setup to a file you can re-load and share">💾 Save</button>
+          <span class="scn-status" id="scn-status">stopped</span>
+        </div>
+      </div>
+
+      <!-- RIGHT: traffic plan preview + measured latency -->
+      <div class="panel">
+        <h2>Traffic plan — queries / sec</h2>
+        <div class="chart-wrap"><canvas id="preview" height="200"></canvas></div>
+        <div class="legend">
+          <span><i style="background:var(--premium)"></i>premium-tenant</span>
+          <span><i style="background:var(--standard)"></i>standard-tenant</span>
+          <span style="margin-left:auto;color:var(--muted)">target q/s · now at right</span>
+        </div>
+
+        <h2 style="margin-top:20px;">Measured latency</h2>
+        <div class="controls">
+          <div class="metric-seg-wrap" id="scn-metric-seg">
+            <span class="seg-label">TTFT</span>
+            <div class="seg">
+              <button data-metric="med_ttft">Median</button>
+              <button data-metric="p90_ttft">P90</button>
+              <button data-metric="p95_ttft" class="active">P95</button>
+              <button data-metric="max_ttft">Max</button>
+            </div>
+            <span class="seg-label">End-to-end</span>
+            <div class="seg">
+              <button data-metric="med_total">Median</button>
+              <button data-metric="p90_total">P90</button>
+              <button data-metric="p95_total">P95</button>
+              <button data-metric="max_total">Max</button>
+            </div>
+          </div>
+          <label title="Trailing window each plotted point is computed over. Each point aggregates (e.g. P95/median/max) every request that finished in the preceding N seconds. Smaller = more responsive but noisier; larger = smoother but slower to react.">Avg window
+            <select id="scn-window-sel">
+              <option value="3">3s</option>
+              <option value="5">5s</option>
+              <option value="10" selected>10s</option>
+              <option value="20">20s</option>
+            </select>
+          </label>
+          <span style="margin-left:auto;color:var(--muted);font-size:11px;">x-axis span set by the <b>Window</b> field at left</span>
+        </div>
+        <div class="chart-wrap"><canvas id="scn-latency" height="240"></canvas></div>
+        <div class="legend">
+          <span><i style="background:var(--premium)"></i>premium-tenant</span>
+          <span><i style="background:var(--standard)"></i>standard-tenant</span>
+          <span id="scn-y-label" style="margin-left:auto;color:var(--muted)"></span>
+        </div>
+
+        <div class="cards" id="scn-cards"></div>
+      </div>
+    </div>
+  </div><!-- /view-scenarios -->
 
 <script>
 "use strict";
 
-// Define distinct colors for each tenant (shades of green/teal for premium, shades of orange/yellow for standard)
-const TENANT_COLORS = {
-  "premium-tenant-a": "#00e5a0",   // bright mint green
-  "premium-tenant-b": "#00b88f",   // medium teal
-  "premium-tenant-c": "#20ffc0",   // light cyan
-  "standard-tenant-a": "#ffaa33",  // bright orange
-  "standard-tenant-b": "#ff8800",  // deep orange
-};
+const TENANT_COLORS = { "premium-tenant": getCSS("--premium"), "standard-tenant": getCSS("--standard") };
 function getCSS(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
 
 let CONFIG = null;
 let mode = "concurrency";   // "concurrency" | "qps"
-let tenantView = "simple";  // "simple" | "detailed"
 // Dialed-in slider values are kept per mode so toggling preserves both.
 const values = { concurrency: {}, qps: {} };
 let metric = "p95_ttft";
 let chartSpan = 60;      // seconds shown on the chart
 let smoothing = 10;      // backend trailing aggregation window (s)
-
-// Per-tenant spike state for independent, realistic traffic patterns
-const tenantSpikeState = {};
-let spikeMode = 'sine'; // 'sine', 'bursty', 'flat'
-
-// Generate realistic spiky traffic that varies over time
-// Exploits overprovisioning gap: provision for P95, median is lower
-function getSpikyTarget(fairnessId, baseTarget) {
-  if (baseTarget === 0 || spikeMode === 'flat') return baseTarget;
-
-  // Initialize state for new tenant
-  if (!tenantSpikeState[fairnessId]) {
-    tenantSpikeState[fairnessId] = {
-      phase: Math.random() * Math.PI * 2,        // Random starting phase (0 to 2π)
-      frequency: 0.05 + Math.random() * 0.15,    // Random frequency (0.05-0.2 Hz)
-      burstCooldown: 0,                           // For bursty mode
-      lastBurstValue: baseTarget                  // For bursty mode
-    };
-  }
-
-  const state = tenantSpikeState[fairnessId];
-  const timestamp = Date.now() / 1000; // Convert to seconds
-
-  if (spikeMode === 'sine') {
-    // Sine wave for smooth spikes over time
-    const wave = Math.sin(timestamp * state.frequency + state.phase);
-
-    // Map wave (-1 to 1) to spike range (70% to 150% of base)
-    // This creates realistic "8...9...15..7...10" patterns Rob described
-    const multiplier = 1.1 + (wave * 0.4);
-
-    // Add small random noise (±5%) to prevent perfectly smooth curves
-    const noise = 0.95 + Math.random() * 0.1;
-
-    return Math.round(baseTarget * multiplier * noise);
-  } else if (spikeMode === 'bursty') {
-    // Bursty traffic: random spikes with cooldown periods
-    if (state.burstCooldown > 0) {
-      state.burstCooldown--;
-      return state.lastBurstValue;
-    }
-
-    // 5% chance per call to start a burst
-    if (Math.random() < 0.05) {
-      state.burstCooldown = 5 + Math.floor(Math.random() * 10); // Burst lasts 5-15 calls
-      state.lastBurstValue = Math.round(baseTarget * (1.5 + Math.random() * 0.5)); // 1.5-2x spike
-      return state.lastBurstValue;
-    } else {
-      // Normal traffic with small variation
-      state.lastBurstValue = Math.round(baseTarget * (0.8 + Math.random() * 0.4)); // 0.8-1.2x
-      return state.lastBurstValue;
-    }
-  }
-
-  return baseTarget; // Fallback
-}
-
-// Legacy function kept for compatibility, now delegates to getSpikyTarget
-function addSpikeVariation(baseTarget) {
-  return baseTarget; // Deprecated: use getSpikyTarget instead
-}
 
 // Per-mode UI knobs: slider bounds/step and how a value is rendered.
 const MODES = {
@@ -321,25 +411,179 @@ const MODES = {
   qps: {
     title: "Queries / sec",
     hint: "Drag the sliders to set how many requests per second each flow issues (open loop), and watch latency move.",
-    max: () => CONFIG.max_qps,
+    max: () => qpsSliderMax(),
     step: 0.1,
     fmt: (v) => (+v).toFixed(1) + "/s",
   },
 };
+
+// The QPS sliders have no hard ceiling — the drag range auto-sizes to the current
+// setup. We round up (niceCeil) to a value above the highest dialed-in rate, with
+// headroom so you can always push higher, floored at the nominal scale so an empty
+// setup still offers a usable range. Releasing a maxed-out slider regrows it.
+function qpsSliderMax() {
+  let peak = CONFIG.max_qps || 1;   // nominal floor (server's --max-qps seed)
+  for (const fid in values.qps) peak = Math.max(peak, (values.qps[fid] || 0) * 1.5);
+  return niceCeil(peak);
+}
 // Per-tenant rolling history of { t (ms), value } for the selected metric is
 // kept separately per metric key so switching metrics keeps prior data.
-const history = {};      // fid -> [ {t, p95_ttft, med_ttft, max_ttft, p95_total, med_total, max_total} ]
+const history = {};      // fid -> [ {t, p95_ttft, med_ttft, max_ttft, med_total, p90_total, p95_total, max_total, target_qps, qps} ]
+// Raw per-request samples streamed from the server, fid -> [ {t (ms), ttft, total} ].
+// The plotted latency points are aggregated from this client-side, so changing
+// the avg window recomputes every existing point instead of only future ones.
+const rawHistory = {};
+let sampleCursor = null;  // server monotonic seconds; highest sample ts ingested
 let lastOk = 0;
 
+// ----- Scenarios view state -----
+let activeView = "live";                       // "live" | "scenarios"
+let scnWindow = 60;                            // seconds shown in the scenarios dashboard (both charts)
+let scnState = { playing: false, phase: 0, elapsed: 0, period: 60, loop: true, name: "" };
+// Client-only "paused" flag: a run was paused for review. The traffic/experiment
+// are stopped server-side (so scnState.playing is false), but we keep the setup
+// locked and the frozen results on screen until Run (fresh) or Reset (edit).
+let scnPaused = false;
+// Experiment = a measurement session tied to each Run. Mirrors the server's
+// experiment block; started/frozen together with the scenario traffic.
+let expState = { running: false, name: "", elapsed: 0, has_result: false };
+let lastData = null;                            // most recent /api/stats snapshot, for export
+let scnBuilder = null;                          // { name, period, loop, curves: {fid: curve} }
+let PRESETS = [];
+let activePreset = -1;
+let SAVED = [];                                // saved scenarios from disk
+
+// Curve types offered in the builder; `fieldsFor` drives which shape inputs are
+// shown. The `spikes`/`jitter` modifier inputs are shown for every type.
+const CURVE_TYPES = [
+  { v: "sine",     label: "Sine" },
+  { v: "constant", label: "Constant" },
+  { v: "ramp",     label: "Ramp (linear trend)" },
+  { v: "triangle", label: "Triangle" },
+  { v: "square",   label: "Square (on/off)" },
+  { v: "spike",    label: "Spike (single pulse)" },
+  { v: "day",      label: "Day (high first half)" },
+  { v: "night",    label: "Night (high second half)" },
+  { v: "pulses",   label: "Pulses (multi-spike timeline)" },
+];
+// Modifier fields are appended to every curve editor (they stack on any shape).
+const MODIFIER_FIELDS = ["spikes", "spike_amp", "spike_width", "jitter", "seed"];
+function fieldsFor(type) {
+  switch (type) {
+    case "constant": return ["base"];
+    case "sine":
+    case "triangle": return ["base", "amplitude", "phase"];
+    case "ramp":     return ["base", "amplitude"];
+    case "square":
+    case "day":
+    case "night":    return ["base", "amplitude", "duty"];
+    case "spike":    return ["base", "amplitude", "pos", "width"];
+    case "pulses":   return ["base", "pulses"];
+    default:         return ["base", "amplitude"];
+  }
+}
+
+// Deterministic PRNG — mirror of _hash01() in flow_ui_server.py. Math.imul(a,b)
+// >>> 0 reduces mod 2**32 exactly like Python's `& 0xFFFFFFFF`, so the spike
+// positions and jitter computed here match server playback bit-for-bit.
+const JITTER_BUCKETS = 120;
+function imul(a, b) { return Math.imul(a | 0, b | 0) >>> 0; }
+function hash01(seed, n) {
+  let x = (imul(seed, 0x9E3779B1) + imul(n, 0x85EBCA77)) >>> 0;
+  x ^= x >>> 16; x = imul(x, 0x7FEB352D);
+  x ^= x >>> 15; x = imul(x, 0x846CA68B);
+  x ^= x >>> 16;
+  return (x >>> 0) / 4294967296;
+}
+
+// Mirror of eval_curve() in flow_ui_server.py so the preview matches playback.
+// A curve is a base shape (`type`) plus two optional modifiers that stack on
+// any shape: `spikes` (random superimposed pulses) and `jitter` (noise band).
+function evalCurve(c, p) {
+  const base = +c.base || 0, amp = +c.amplitude || 0, phase = +c.phase || 0;
+  let ph = (p + phase) % 1; if (ph < 0) ph += 1;
+  let v;
+  switch (c.type) {
+    case "sine":   v = base + amp * Math.sin(2 * Math.PI * ph); break;
+    case "ramp":   v = base + amp * ph; break;
+    case "triangle": v = base + amp * (1 - Math.abs(2 * ph - 1)); break;
+    case "square": { const duty = c.duty == null ? 0.5 : +c.duty; v = ph < duty ? base + amp : base; break; }
+    case "spike": {
+      const pos = c.pos == null ? 0.5 : +c.pos, width = c.width == null ? 0.08 : +c.width;
+      let d = Math.abs(ph - pos); d = Math.min(d, 1 - d);
+      v = d < width / 2 ? base + amp : base; break;
+    }
+    case "day":   { const duty = c.duty == null ? 0.5 : +c.duty; v = ph < duty ? base + amp : base; break; }
+    case "night": { const duty = c.duty == null ? 0.5 : +c.duty; v = ph >= (1 - duty) ? base + amp : base; break; }
+    case "pulses": {
+      // Explicit multi-spike timeline: rectangular spikes at `at` (s) for `dur`
+      // (s), height `amp` (q/s). Mirror of the "pulses" branch in eval_curve().
+      const per = +c.period || 60, t = ph * per;
+      v = base;
+      for (const pl of (c.pulses || [])) {
+        const dur = +pl.dur || 0;
+        if (dur <= 0) continue;
+        let local = ((t - (+pl.at || 0)) % per + per) % per;   // normalize to [0, per)
+        if (local < dur) v += +pl.amp || 0;
+      }
+      break;
+    }
+    default:      v = base;   // "constant"
+  }
+  // Modifier: superimposed random spikes.
+  const nspk = (c.spikes | 0);
+  if (nspk > 0) {
+    const seed = (c.seed | 0) || 0;
+    const spkAmp = c.spike_amp == null ? (amp || base) : +c.spike_amp;
+    const spkW = c.spike_width == null ? 0.04 : +c.spike_width;
+    for (let k = 0; k < nspk; k++) {
+      const pos = hash01(seed, k);
+      let d = Math.abs(ph - pos); d = Math.min(d, 1 - d);
+      if (d < spkW / 2) v += spkAmp;
+    }
+  }
+  // Modifier: jitter / noise band (piecewise-constant per bucket).
+  const jit = +c.jitter || 0;
+  if (jit > 0) {
+    const seed = (c.seed | 0) || 0;
+    const bucket = Math.floor(ph * JITTER_BUCKETS);
+    const r = hash01(seed ^ 0x5BD1E995, bucket);
+    v *= 1 + jit * (r - 0.5) * 2;
+  }
+  return Math.max(0, v);   // no upper cap — the axis auto-fits to the curve peak
+}
+
+// Nearest-rank percentile matching the server's _percentile() index convention.
+function pctl(sorted, q) {
+  if (!sorted.length) return null;
+  if (q <= 0) return sorted[0];
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
+}
+// Aggregate the latency metrics for one tenant over the trailing `windowSec`
+// ending at `tEndMs`, from the client-side raw sample buffer.
+function aggFromRaw(fid, tEndMs, windowSec) {
+  const rb = rawHistory[fid] || [];
+  const cutoff = tEndMs - windowSec * 1000;
+  const ttfts = [], totals = [];
+  for (const s of rb) {
+    if (s.t > cutoff && s.t <= tEndMs) { ttfts.push(s.ttft); totals.push(s.total); }
+  }
+  ttfts.sort((a, b) => a - b); totals.sort((a, b) => a - b);
+  return {
+    med_ttft: pctl(ttfts, 0.5), p90_ttft: pctl(ttfts, 0.90), p95_ttft: pctl(ttfts, 0.95), max_ttft: pctl(ttfts, 1.0),
+    med_total: pctl(totals, 0.5), p90_total: pctl(totals, 0.90), p95_total: pctl(totals, 0.95), max_total: pctl(totals, 1.0),
+  };
+}
+
 const METRIC_LABELS = {
-  p95_ttft: "P95 time-to-first-token (s)",
   med_ttft: "Median time-to-first-token (s)",
+  p90_ttft: "P90 time-to-first-token (s)",
+  p95_ttft: "P95 time-to-first-token (s)",
   max_ttft: "Max time-to-first-token (s)",
-  p95_total: "P95 total latency (s)",
-  med_total: "Median total latency (s)",
-  max_total: "Max total latency (s)",
-  p95_tpot: "P95 time-per-output-token (ms)",
-  med_tpot: "Median time-per-output-token (ms)",
+  med_total: "Median end-to-end latency (s)",
+  p90_total: "P90 end-to-end latency (s)",
+  p95_total: "P95 end-to-end latency (s)",
+  max_total: "Max end-to-end latency (s)",
 };
 
 // ---------- init ----------
@@ -361,40 +605,47 @@ async function init() {
     b.addEventListener("click", () => setMode(b.dataset.mode));
   });
 
-  // tenant view toggle (Simple <-> Detailed)
-  document.getElementById("tenant-view-toggle").addEventListener("click", () => {
-    tenantView = tenantView === "simple" ? "detailed" : "simple";
-    document.getElementById("tenant-view-toggle").textContent =
-      tenantView === "simple" ? "Simple View" : "Detailed View";
-    buildTenantControls();
-  });
-
-  // metric selector (dropdown)
-  document.getElementById("metric-sel").addEventListener("change", (e) => {
-    metric = e.target.value;
-    draw();
+  // metric selector — the live and scenarios charts share the selected metric,
+  // so either button group drives both (kept visually in sync by setMetric).
+  document.querySelectorAll("#metric-seg button, #scn-metric-seg button").forEach(b => {
+    b.addEventListener("click", () => setMetric(b.dataset.metric));
   });
   document.getElementById("span-sel").addEventListener("change", e => { chartSpan = +e.target.value; draw(); });
-  document.getElementById("window-sel").addEventListener("change", e => { smoothing = +e.target.value; });
+  // Avg window (smoothing) is global; both selectors set it and stay in sync.
+  document.getElementById("window-sel").addEventListener("change", e => setSmoothing(+e.target.value));
+  document.getElementById("scn-window-sel").addEventListener("change", e => setSmoothing(+e.target.value));
   document.getElementById("reset-btn").addEventListener("click", async () => {
     await fetch("/api/reset", { method: "POST" });
     for (const k in history) history[k] = [];
+    for (const k in rawHistory) rawHistory[k] = [];
+    sampleCursor = null;
     draw();
   });
   document.getElementById("zero-btn").addEventListener("click", () => {
     for (const t of CONFIG.tenants) setTarget(t.fairness_id, 0, true);
   });
 
-  // Build dynamic legend
-  const legendEl = document.getElementById("chart-legend");
-  const yLabel = document.getElementById("y-label");
-  legendEl.innerHTML = '';
-  for (const t of CONFIG.tenants) {
-    const span = document.createElement('span');
-    span.innerHTML = `<i style="background:${TENANT_COLORS[t.fairness_id]}"></i>${t.fairness_id}`;
-    legendEl.appendChild(span);
-  }
-  legendEl.appendChild(yLabel);
+  // ----- scenarios view -----
+  buildPresets();
+  renderPresets();
+  loadPreset(0);   // populate the builder with the first preset
+  loadSaved();     // pull any on-disk saved scenarios
+
+  document.querySelectorAll(".nav button").forEach(b => {
+    b.addEventListener("click", () => setView(b.dataset.view));
+  });
+  document.getElementById("scn-play").addEventListener("click", scnPlay);
+  document.getElementById("scn-pause").addEventListener("click", scnPause);
+  document.getElementById("scn-reset").addEventListener("click", scnReset);
+  document.getElementById("scn-save").addEventListener("click", saveScenario);
+  document.getElementById("exp-export-json").addEventListener("click", () => exportExperiment("json"));
+  document.getElementById("exp-export-csv").addEventListener("click", () => exportExperiment("csv"));
+  document.getElementById("scn-window").addEventListener("input", e => {
+    scnWindow = Math.max(10, Math.min(+e.target.value || 60, 300));
+    draw();   // re-scale both the traffic plan and the measured-latency chart
+  });
+  document.getElementById("scn-loop").addEventListener("change", e => { scnBuilder.loop = e.target.checked; });
+  document.getElementById("scn-name").addEventListener("input", () => { activePreset = -1; renderPresets(); });
 
   window.addEventListener("resize", draw);
   draw();
@@ -428,88 +679,37 @@ function buildTenantControls() {
   const max = m.max();
   const root = document.getElementById("tenants");
   root.innerHTML = "";
-
-  if (tenantView === "simple") {
-    // Simple view: just "Premium" and "Standard" aggregated controls
-    buildSimpleTenantControl(root, "Premium", "premium", CONFIG.tenants.filter(t => t.priority >= 100), m, max);
-    buildSimpleTenantControl(root, "Standard", "standard", CONFIG.tenants.filter(t => t.priority < 100), m, max);
-  } else {
-    // Detailed view: show all individual tenants grouped by priority
-    const tenants = [...CONFIG.tenants].sort((a, b) => b.priority - a.priority);
-    let lastPriority = null;
-    for (const t of tenants) {
-      // Add priority header when priority changes
-      if (t.priority !== lastPriority) {
-        const header = document.createElement("div");
-        header.style.cssText = "margin-top: 16px; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;";
-        header.textContent = `Priority ${t.priority}`;
-        root.appendChild(header);
-        lastPriority = t.priority;
-      }
-
-      const cls = t.priority >= 100 ? "premium" : "standard";
-      const cur = values[mode][t.fairness_id] || 0;
-      const el = document.createElement("div");
-      el.className = "tenant " + cls;
-      el.innerHTML = `
-        <div class="row">
-          <div><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>
-            <span class="name">${t.fairness_id}</span>
-            <span class="obj">· ${t.objective}</span>
-          </div>
-          <span class="val" id="val-${t.fairness_id}">${m.fmt(cur)}</span>
+  // premium first (higher priority on top, like the CLI dashboard)
+  const tenants = [...CONFIG.tenants].sort((a, b) => b.priority - a.priority);
+  for (const t of tenants) {
+    const cls = t.fairness_id === "premium-tenant" ? "premium" : "standard";
+    const cur = values[mode][t.fairness_id] || 0;
+    const el = document.createElement("div");
+    el.className = "tenant " + cls;
+    el.innerHTML = `
+      <div class="row">
+        <div><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>
+          <span class="name">${t.fairness_id}</span>
+          <span class="obj">· ${t.objective} · pri ${t.priority}</span>
         </div>
-        <input type="range" min="0" max="${max}" step="${m.step}" value="${cur}"
-               id="slider-${t.fairness_id}" />
-        <div class="ticks"><span>0</span><span>${m.fmt(max/2)}</span><span>${m.fmt(max)}</span></div>
-      `;
-      root.appendChild(el);
-      const slider = el.querySelector("input");
-      slider.addEventListener("input", () => {
-        document.getElementById("val-" + t.fairness_id).textContent = m.fmt(+slider.value);
-        setTarget(t.fairness_id, +slider.value, false);
-      });
-    }
-  }
-}
-
-function buildSimpleTenantControl(root, label, cls, tenants, m, max) {
-  if (tenants.length === 0) return;
-
-  // Calculate aggregate current value across all tenants in this tier
-  const aggregate = tenants.reduce((sum, t) => sum + (values[mode][t.fairness_id] || 0), 0);
-
-  const color = cls === "premium" ? getCSS("--premium") : getCSS("--standard");
-  const el = document.createElement("div");
-  el.className = "tenant " + cls;
-  el.innerHTML = `
-    <div class="row">
-      <div><span class="dot" style="background:${color}"></span>
-        <span class="name">${label}</span>
-        <span class="obj">· ${tenants.length} tenant${tenants.length > 1 ? 's' : ''} · pri ${tenants[0].priority}</span>
+        <span class="val" id="val-${t.fairness_id}">${m.fmt(cur)}</span>
       </div>
-      <span class="val" id="val-${cls}">${m.fmt(aggregate)}</span>
-    </div>
-    <input type="range" min="0" max="${max}" step="${m.step}" value="${aggregate}"
-           id="slider-${cls}" />
-    <div class="ticks"><span>0</span><span>${m.fmt(max/2)}</span><span>${m.fmt(max)}</span></div>
-  `;
-  root.appendChild(el);
-
-  const slider = el.querySelector("input");
-  slider.addEventListener("input", () => {
-    const newTotal = +slider.value;
-    document.getElementById("val-" + cls).textContent = m.fmt(newTotal);
-
-    // Distribute evenly across all tenants in this tier
-    const perTenant = Math.floor(newTotal / tenants.length);
-    const remainder = newTotal % tenants.length;
-
-    tenants.forEach((t, i) => {
-      const target = perTenant + (i < remainder ? 1 : 0);
-      setTarget(t.fairness_id, target, false);
+      <input type="range" min="0" max="${max}" step="${m.step}" value="${cur}"
+             id="slider-${t.fairness_id}" />
+      <div class="ticks"><span>0</span><span>${m.fmt(max/2)}</span><span>${m.fmt(max)}</span></div>
+    `;
+    root.appendChild(el);
+    const slider = el.querySelector("input");
+    slider.addEventListener("input", () => {
+      document.getElementById("val-" + t.fairness_id).textContent = m.fmt(+slider.value);
+      setTarget(t.fairness_id, +slider.value, false);
     });
-  });
+    // QPS sliders auto-grow: if you drag one to the top and release, the range
+    // rescales (with headroom) so you can keep pushing higher.
+    slider.addEventListener("change", () => {
+      if (mode === "qps" && +slider.max !== qpsSliderMax()) { buildTenantControls(); draw(); }
+    });
+  }
 }
 
 // Post the dialed-in value to the endpoint for the current mode, debounced a
@@ -543,7 +743,9 @@ async function flushTargets() {
 // ---------- polling ----------
 async function poll() {
   try {
-    const data = await fetch("/api/stats?window=" + smoothing).then(r => r.json());
+    const url = "/api/stats?window=" + smoothing
+      + (sampleCursor != null ? "&since=" + sampleCursor : "");
+    const data = await fetch(url).then(r => r.json());
     lastOk = Date.now();
     onStats(data);
     setConn(true);
@@ -561,6 +763,7 @@ function setConn(ok) {
 }
 
 function onStats(data) {
+  lastData = data;   // keep the latest snapshot around for the experiment export
   // banner
   const banner = document.getElementById("banner");
   const sat = data.saturated;
@@ -578,39 +781,33 @@ function onStats(data) {
   }
 
   const now = data.ts_ms;
+  // Map server monotonic-clock sample timestamps onto the chart's wall-clock ms.
+  // Both come from the same response, so the offset is taken at one instant.
+  const offset = data.ts_ms - data.now * 1000;
+  const cutoff = now - 320000;  // largest span we might show (5m) plus slack
   for (const t of data.tenants) {
+    // Accumulate raw samples into the client buffer (kept longer than the
+    // server retains them, so a window change can recompute the full span).
+    const rb = rawHistory[t.fairness_id] || (rawHistory[t.fairness_id] = []);
+    for (const [ts, ttft, total] of (t.samples || [])) {
+      rb.push({ t: ts * 1000 + offset, ttft, total });
+      if (sampleCursor == null || ts > sampleCursor) sampleCursor = ts;
+    }
+    while (rb.length && rb[0].t < cutoff) rb.shift();
+
     const h = history[t.fairness_id] || (history[t.fairness_id] = []);
     h.push({
       t: now,
-      p95_ttft: t.p95_ttft, med_ttft: t.med_ttft, max_ttft: t.max_ttft,
-      p95_total: t.p95_total, med_total: t.med_total, max_total: t.max_total,
-      p95_tpot: t.p95_tpot ? t.p95_tpot * 1000 : null, // Convert to ms
-      med_tpot: t.med_tpot ? t.med_tpot * 1000 : null,
+      ...aggFromRaw(t.fairness_id, now, smoothing),
+      target_qps: t.target_qps, qps: t.qps,
     });
     // prune to the largest span we might show (5m) plus a little slack
-    const cutoff = now - 320000;
     while (h.length && h[0].t < cutoff) h.shift();
-
-    // Sync sliders with actual targets from backend (for auto-test runner)
-    if (data.mode === "concurrency") {
-      values.concurrency[t.fairness_id] = t.target;
-      const slider = document.querySelector(`.slider-row[data-fairness-id="${t.fairness_id}"] input[type="range"]`);
-      if (slider && parseInt(slider.value) !== t.target) {
-        slider.value = t.target;
-        const valueSpan = slider.nextElementSibling;
-        if (valueSpan) valueSpan.textContent = t.target;
-      }
-    } else if (data.mode === "qps") {
-      values.qps[t.fairness_id] = t.target_qps;
-      const slider = document.querySelector(`.slider-row[data-fairness-id="${t.fairness_id}"] input[type="range"]`);
-      if (slider && parseFloat(slider.value) !== t.target_qps) {
-        slider.value = t.target_qps;
-        const valueSpan = slider.nextElementSibling;
-        if (valueSpan) valueSpan.textContent = t.target_qps.toFixed(1);
-      }
-    }
   }
-  renderCards(data);
+  if (data.scenario) { scnState = data.scenario; updateScnStatus(); }
+  if (data.experiment) { expState = data.experiment; updateExpStatus(); }
+  if (activeView === "scenarios") renderScnCards(data);
+  else renderCards(data, "cards");
   draw();
 }
 
@@ -618,55 +815,17 @@ function onStats(data) {
 function fmt(v, unit) { return (v === null || v === undefined) ? "—" : v.toFixed(2) + (unit || ""); }
 function latClass(v) { if (v === null || v === undefined) return ""; return v < 2 ? "good" : v < 10 ? "mid" : "hot"; }
 
-function renderCards(data) {
-  const root = document.getElementById("cards");
+function renderCards(data, rootId) {
+  const root = document.getElementById(rootId || "cards");
+  if (!root) return;
   const qps = data.mode === "qps";
-  let tenants = [...data.tenants].sort((a, b) => b.priority - a.priority);
-
-  // In simple view, aggregate metrics by priority tier
-  if (tenantView === "simple") {
-    const premiumTenants = tenants.filter(t => t.priority === 100);
-    const standardTenants = tenants.filter(t => t.priority === 0);
-
-    const aggregateTier = (tierTenants, name, color) => {
-      if (tierTenants.length === 0) return null;
-      return {
-        fairness_id: name,
-        priority: tierTenants[0].priority,
-        med_ttft: tierTenants.reduce((sum, t) => sum + (t.med_ttft || 0), 0) / tierTenants.length,
-        p95_ttft: Math.max(...tierTenants.map(t => t.p95_ttft || 0)),
-        max_ttft: Math.max(...tierTenants.map(t => t.max_ttft || 0)),
-        med_total: tierTenants.reduce((sum, t) => sum + (t.med_total || 0), 0) / tierTenants.length,
-        p95_total: Math.max(...tierTenants.map(t => t.p95_total || 0)),
-        max_total: Math.max(...tierTenants.map(t => t.max_total || 0)),
-        active: tierTenants.reduce((sum, t) => sum + t.active, 0),
-        target: tierTenants.reduce((sum, t) => sum + t.target, 0),
-        qps: tierTenants.reduce((sum, t) => sum + t.qps, 0),
-        target_qps: tierTenants.reduce((sum, t) => sum + t.target_qps, 0),
-        s_200: tierTenants.reduce((sum, t) => sum + t.s_200, 0),
-        s_429: tierTenants.reduce((sum, t) => sum + t.s_429, 0),
-        s_503: tierTenants.reduce((sum, t) => sum + t.s_503, 0),
-        s_err: tierTenants.reduce((sum, t) => sum + t.s_err, 0),
-        color: color
-      };
-    };
-
-    tenants = [
-      aggregateTier(premiumTenants, "Premium", "#00e5a0"),
-      aggregateTier(standardTenants, "Standard", "#ffaa33")
-    ].filter(Boolean);
-  }
-
+  const tenants = [...data.tenants].sort((a, b) => b.priority - a.priority);
   root.innerHTML = tenants.map(t => `
     <div class="card">
-      <div class="ttl"><span class="dot" style="background:${t.color || TENANT_COLORS[t.fairness_id]}"></span>${t.fairness_id}</div>
+      <div class="ttl"><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>${t.fairness_id}</div>
       <div class="metrics">
-        <div class="m"><b>med TTFT</b><span class="${latClass(t.med_ttft)}">${fmt(t.med_ttft,"s")}</span></div>
-        <div class="m"><b>p95 TTFT</b><span class="${latClass(t.p95_ttft)}">${fmt(t.p95_ttft,"s")}</span></div>
-        <div class="m"><b>max TTFT</b><span class="${latClass(t.max_ttft)}">${fmt(t.max_ttft,"s")}</span></div>
-        <div class="m"><b>med total</b><span>${fmt(t.med_total,"s")}</span></div>
-        <div class="m"><b>p95 total</b><span>${fmt(t.p95_total,"s")}</span></div>
-        <div class="m"><b>max total</b><span>${fmt(t.max_total,"s")}</span></div>
+        ${latRows(t)}
+        <div class="grp">Throughput</div>
         <div class="m"><b>in-flight</b><span>${qps ? t.active : t.active + " / " + t.target}</span></div>
         <div class="m"><b>QPS</b><span>${qps ? t.qps.toFixed(1) + " / " + t.target_qps.toFixed(1) : t.qps.toFixed(1)}</span></div>
       </div>
@@ -680,13 +839,186 @@ function renderCards(data) {
   `).join("");
 }
 
+// The latency percentiles shared by the moving-average and experiment views.
+function latRows(o) {
+  return `
+    <div class="grp">TTFT</div>
+    <div class="m"><b>med</b><span class="${latClass(o.med_ttft)}">${fmt(o.med_ttft,"s")}</span></div>
+    <div class="m"><b>p90</b><span class="${latClass(o.p90_ttft)}">${fmt(o.p90_ttft,"s")}</span></div>
+    <div class="m"><b>p95</b><span class="${latClass(o.p95_ttft)}">${fmt(o.p95_ttft,"s")}</span></div>
+    <div class="m"><b>max</b><span class="${latClass(o.max_ttft)}">${fmt(o.max_ttft,"s")}</span></div>
+    <div class="grp">End-to-end</div>
+    <div class="m"><b>med</b><span>${fmt(o.med_total,"s")}</span></div>
+    <div class="m"><b>p90</b><span>${fmt(o.p90_total,"s")}</span></div>
+    <div class="m"><b>p95</b><span>${fmt(o.p95_total,"s")}</span></div>
+    <div class="m"><b>max</b><span>${fmt(o.max_total,"s")}</span></div>`;
+}
+function codeRow(o) {
+  return `<span class="ok">200: ${o.s_200}</span>`
+    + `<span class="warn">429: ${o.s_429}</span>`
+    + `<span class="bad">503: ${o.s_503}</span>`
+    + `<span class="bad">err: ${o.s_err}</span>`;
+}
+
+// Scenarios-view cards: each tenant shows the trailing moving-average window
+// next to the cumulative metrics accumulated since the experiment started.
+function renderScnCards(data) {
+  const root = document.getElementById("scn-cards");
+  if (!root) return;
+  const qps = data.mode === "qps";
+  const tenants = [...data.tenants].sort((a, b) => b.priority - a.priority);
+  const expHdr = data.experiment && data.experiment.running
+    ? `Since experiment start · ${Math.floor(data.experiment.elapsed)}s`
+    : (data.experiment && data.experiment.has_result ? "Experiment (final)" : "Since experiment start");
+  root.innerHTML = tenants.map(t => {
+    const e = t.exp;   // cumulative stats for this tenant, or null
+    const movInflight = `
+      <div class="m"><b>in-flight</b><span>${qps ? t.active : t.active + " / " + t.target}</span></div>
+      <div class="m"><b>QPS</b><span>${qps ? t.qps.toFixed(1) + " / " + t.target_qps.toFixed(1) : t.qps.toFixed(1)}</span></div>`;
+    const expExtra = e ? `
+      <div class="m"><b>requests</b><span>${e.samples}</span></div>
+      <div class="m"><b>avg QPS</b><span>${e.qps.toFixed(2)}</span></div>` : "";
+    return `
+      <div class="card">
+        <div class="ttl"><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>${t.fairness_id}</div>
+        <div class="twocol">
+          <div class="subcard">
+            <div class="col-h">Moving avg · ${smoothing}s window</div>
+            <div class="metrics">${latRows(t)}${movInflight}</div>
+            <div class="codes">${codeRow(t)}</div>
+          </div>
+          <div class="subcard${e ? "" : " muted-col"}">
+            <div class="col-h"><span class="accent">${expHdr}</span></div>
+            ${e
+              ? `<div class="metrics">${latRows(e)}${expExtra}</div><div class="codes">${codeRow(e)}</div>`
+              : `<div class="no-exp">No experiment yet — press <b>Run</b> to accumulate cumulative metrics here.</div>`}
+          </div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function updateExpStatus() {
+  const bar = document.getElementById("exp-bar");
+  const st = document.getElementById("exp-state");
+  const sub = document.getElementById("exp-sub");
+  if (!bar) return;
+  if (expState.running) {
+    bar.classList.add("running");
+    st.textContent = `● ${expState.name || "Experiment"} running`;
+    sub.textContent = `Accumulating cumulative metrics · ${Math.floor(expState.elapsed)}s elapsed. Press Reset to stop, or Run to start a fresh experiment.`;
+  } else if (expState.has_result) {
+    bar.classList.remove("running");
+    st.textContent = `■ ${expState.name || "Experiment"} ended`;
+    sub.textContent = `Final cumulative results shown below · ran ${Math.floor(expState.elapsed)}s. Press Run to start a fresh experiment.`;
+  } else {
+    bar.classList.remove("running");
+    st.textContent = "No experiment running";
+    sub.textContent = "Build a scenario, then press Run to start a fresh experiment — every Run accumulates metrics from zero alongside the moving averages.";
+  }
+  // Export is only meaningful once there are cumulative results (running or frozen).
+  const canExport = expState.running || expState.has_result;
+  for (const id of ["exp-export-json", "exp-export-csv"]) {
+    const b = document.getElementById(id);
+    if (b) b.disabled = !canExport;
+  }
+}
+
+// The cumulative experiment metrics, in display order: TTFT percentiles, then
+// end-to-end percentiles, then throughput & status-code counts. Keys match the
+// server's experiment_stats payload (tenant.exp).
+const EXPORT_METRICS = [
+  "med_ttft", "p90_ttft", "p95_ttft", "max_ttft",
+  "med_total", "p90_total", "p95_total", "max_total",
+  "qps", "samples", "s_200", "s_429", "s_503", "s_err",
+];
+
+// Download the current experiment's cumulative results. `format` is "json" (full
+// fidelity: metadata + scenario setup + every per-tenant metric) or "csv" (one
+// row per tenant for spreadsheets). Reads the latest /api/stats snapshot, so it
+// captures the running totals if live or the frozen final result if stopped.
+function exportExperiment(format) {
+  const data = lastData;
+  if (!data || !data.experiment || !(data.experiment.running || data.experiment.has_result)) {
+    alert("No experiment results to export yet — press Run to start one.");
+    return;
+  }
+  const exp = data.experiment;
+  const tenants = [...data.tenants].sort((a, b) => b.priority - a.priority);
+  const rows = tenants.map(t => {
+    const e = t.exp || {};
+    const row = { fairness_id: t.fairness_id, objective: t.objective, priority: t.priority, target_qps: t.target_qps };
+    for (const k of EXPORT_METRICS) row[k] = (e[k] == null ? null : e[k]);
+    return row;
+  });
+  const stamp = new Date();
+  const meta = {
+    name: exp.name || "experiment",
+    state: exp.running ? "running" : "final",
+    started_at: exp.started_ms ? new Date(exp.started_ms).toISOString() : null,
+    elapsed_s: Math.round(exp.elapsed || 0),
+    exported_at: stamp.toISOString(),
+    mode: data.mode,
+    capacity: data.capacity,
+  };
+  const base = `experiment-${meta.name.replace(/[^a-z0-9_-]+/gi, "-")}-${fileStamp(stamp)}`;
+
+  if (format === "csv") {
+    const cols = ["fairness_id", "objective", "priority", "target_qps", ...EXPORT_METRICS];
+    const lines = [
+      `# ${meta.name} · ${meta.state} · ran ${meta.elapsed_s}s · exported ${meta.exported_at}`,
+      cols.join(","),
+      ...rows.map(r => cols.map(c => csvCell(r[c])).join(",")),
+    ];
+    downloadBlob(base + ".csv", "text/csv", lines.join("\n"));
+  } else {
+    const payload = {
+      experiment: meta,
+      // The scenario setup currently loaded in the builder, for reproducibility.
+      scenario: scnBuilder ? { name: scnBuilder.name, period: scnBuilder.period, loop: scnBuilder.loop, curves: scnBuilder.curves } : null,
+      tenants: rows,
+    };
+    downloadBlob(base + ".json", "application/json", JSON.stringify(payload, null, 2));
+  }
+}
+
+function csvCell(v) {
+  if (v == null) return "";
+  const s = String(v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function fileStamp(d) {
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+function downloadBlob(filename, type, text) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 // ---------- canvas chart ----------
+// Dispatch to whichever view is active. Both views share the same latency
+// history; the scenarios view also redraws its traffic-plan preview.
 function draw() {
-  const canvas = document.getElementById("chart");
   if (!CONFIG) return;
+  if (activeView === "scenarios") {
+    drawLatency("scn-latency", 240, "scn-y-label", scnWindow);
+    drawPreview("preview");
+  } else {
+    drawLatency("chart", 340, "y-label", chartSpan);
+  }
+}
+
+function drawLatency(canvasId, cssH, yLabelId, span) {
+  span = span || chartSpan;
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !CONFIG) return;
   const dpr = window.devicePixelRatio || 1;
   const cssW = canvas.clientWidth || canvas.parentElement.clientWidth;
-  const cssH = 340;
   canvas.width = cssW * dpr; canvas.height = cssH * dpr;
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -695,9 +1027,10 @@ function draw() {
   const padL = 52, padR = 12, padT = 12, padB = 24;
   const W = cssW - padL - padR, H = cssH - padT - padB;
   const now = Date.now();
-  const tMin = now - chartSpan * 1000, tMax = now;
+  const tMin = now - span * 1000, tMax = now;
 
-  document.getElementById("y-label").textContent = METRIC_LABELS[metric];
+  const yLabelEl = document.getElementById(yLabelId);
+  if (yLabelEl) yLabelEl.textContent = METRIC_LABELS[metric];
 
   // find y-max across visible data
   let yMax = 0;
@@ -720,11 +1053,11 @@ function draw() {
     ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + W, y); ctx.stroke(); ctx.globalAlpha = 1;
     ctx.textAlign = "right"; ctx.fillText(val.toFixed(val < 10 ? 1 : 0) + "s", padL - 8, y);
   }
-  // x labels (every ~10s relative)
+  // x labels (relative seconds, now on the right)
   ctx.textAlign = "center"; ctx.textBaseline = "top";
-  const step = chartSpan <= 60 ? 10 : chartSpan <= 120 ? 20 : 60;
-  for (let s = 0; s <= chartSpan; s += step) {
-    const x = padL + W * (1 - s / chartSpan);
+  const step = spanStep(span);
+  for (let s = 0; s <= span; s += step) {
+    const x = padL + W * (1 - s / span);
     ctx.fillText("-" + s + "s", x, padT + H + 6);
   }
 
@@ -755,319 +1088,533 @@ function draw() {
   }
 }
 
+// ---------- scenarios view ----------
+function setView(v) {
+  activeView = v;
+  document.getElementById("view-live").hidden = v !== "live";
+  document.getElementById("view-scenarios").hidden = v !== "scenarios";
+  document.querySelectorAll(".nav button").forEach(b => b.classList.toggle("active", b.dataset.view === v));
+  draw();
+}
+
+// Shared metric selection: set the metric, sync both button groups, redraw.
+function setMetric(m) {
+  if (!METRIC_LABELS[m]) return;
+  metric = m;
+  document.querySelectorAll("#metric-seg button, #scn-metric-seg button").forEach(x =>
+    x.classList.toggle("active", x.dataset.metric === m));
+  draw();
+}
+
+// Shared trailing aggregation window: set it and keep both selectors in sync.
+// Aggregation is client-side, so re-aggregate every existing plotted point over
+// the new window from the raw buffer, then redraw — previous points update too.
+function setSmoothing(s) {
+  smoothing = s;
+  const a = document.getElementById("window-sel"), b = document.getElementById("scn-window-sel");
+  if (a) a.value = s;
+  if (b) b.value = s;
+  for (const fid in history) {
+    for (const p of history[fid]) Object.assign(p, aggFromRaw(fid, p.t, smoothing));
+  }
+  draw();
+}
+
+function colorClass(fid) {
+  if (fid === "premium-tenant") return "premium";
+  if (fid === "standard-tenant") return "standard";
+  return "";
+}
+function num(v) { v = +v || 0; return Math.round(v * 100) / 100; }
+
+// Presets are defined as fractions of max_qps so they scale with --max-qps.
+function buildPresets() {
+  const M = CONFIG.max_qps;
+  PRESETS = [
+    {
+      name: "Sinusoidal",
+      desc: "Both tiers are sine waves; the standard tier is offset by phase. At phase 0.5 they perfectly overlap — the two flows complement each other so total load stays balanced.",
+      period: 60, loop: true,
+      curves: {
+        "premium-tenant":  { type: "sine", base: 0.5 * M, amplitude: 0.5 * M, phase: 0 },
+        "standard-tenant": { type: "sine", base: 0.5 * M, amplitude: 0.5 * M, phase: 0.5 },
+      },
+    },
+    {
+      name: "Spike",
+      desc: "Premium is constant; standard spikes suddenly each period.",
+      period: 30, loop: true,
+      curves: {
+        "premium-tenant":  { type: "constant", base: 0.5 * M },
+        "standard-tenant": { type: "spike", base: 0.1 * M, amplitude: 0.9 * M, pos: 0.5, width: 0.08 },
+      },
+    },
+  ];
+}
+
+function renderPresets() {
+  const root = document.getElementById("presets");
+  root.innerHTML = "";
+  PRESETS.forEach((p, i) => {
+    const b = document.createElement("button");
+    b.className = "preset" + (i === activePreset ? " active" : "");
+    b.innerHTML = `<div class="pname">${p.name}</div><div class="pdesc">${p.desc}</div>`;
+    b.addEventListener("click", () => loadPreset(i));
+    root.appendChild(b);
+  });
+}
+
+function loadPreset(i) {
+  const p = PRESETS[i];
+  activePreset = i;
+  loadScenarioInto(p);
+  renderPresets();
+}
+
+// Shared loader: copy a {name, period, loop, curves, window?} record into the
+// builder. Each tenant's cycle length is materialized onto its own curve, so the
+// scenario-level `period` is only a fallback; the displayed window is separate.
+function loadScenarioInto(rec) {
+  const base = +rec.period || 60;
+  const curves = JSON.parse(JSON.stringify(rec.curves));
+  let maxPeriod = base;
+  for (const fid in curves) {
+    curves[fid].period = +curves[fid].period || base;
+    maxPeriod = Math.max(maxPeriod, curves[fid].period);
+  }
+  scnBuilder = { name: rec.name, period: base, loop: rec.loop !== false, curves };
+  // Default the dashboard window to one full cycle of the slowest tenant.
+  scnWindow = Math.max(10, Math.min(+rec.window || maxPeriod, 300));
+  document.getElementById("scn-name").value = rec.name || "";
+  document.getElementById("scn-window").value = scnWindow;
+  document.getElementById("scn-loop").checked = rec.loop !== false;
+  buildScnEditors();
+  drawPreview("preview");
+}
+
+// ----- saved scenarios (on-disk files) -----
+async function loadSaved() {
+  try {
+    const data = await fetch("/api/scenarios").then(r => r.json());
+    SAVED = Array.isArray(data.scenarios) ? data.scenarios : [];
+  } catch (e) { SAVED = []; }
+  renderSaved();
+}
+
+function renderSaved() {
+  const root = document.getElementById("saved");
+  const empty = document.getElementById("saved-empty");
+  if (!root) return;
+  if (empty) empty.style.display = SAVED.length ? "none" : "";
+  root.innerHTML = "";
+  SAVED.forEach(rec => {
+    const tiers = Object.keys(rec.curves || {}).length;
+    const row = document.createElement("div");
+    row.className = "preset";
+    row.innerHTML = `<div class="pname">${escapeHtml(rec.name || rec.slug)}`
+      + `<span class="scn-del" title="Delete" style="float:right;color:var(--muted);cursor:pointer;padding:0 2px;">✕</span></div>`
+      + `<div class="pdesc">window ${rec.window || rec.period || 60}s · ${rec.loop !== false ? "loop" : "once"} · ${tiers} tier${tiers === 1 ? "" : "s"}</div>`;
+    // Clicking the row loads it into the builder…
+    row.addEventListener("click", () => {
+      activePreset = -1;
+      loadScenarioInto(rec);
+      renderPresets();
+    });
+    // …except the ✕, which deletes it (stop the click from also loading).
+    row.querySelector(".scn-del").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      deleteSaved(rec.slug, rec.name);
+    });
+    root.appendChild(row);
+  });
+}
+
+async function saveScenario() {
+  scnBuilder.name = document.getElementById("scn-name").value.trim();
+  scnBuilder.loop = document.getElementById("scn-loop").checked;
+  if (!scnBuilder.name) { alert("Give the scenario a name before saving."); return; }
+  try {
+    const res = await fetch("/api/scenarios/save", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: scnBuilder.name, period: scnBuilder.period, loop: scnBuilder.loop, window: scnWindow, curves: scnBuilder.curves }),
+    }).then(r => r.json());
+    if (res.error) { alert("Save failed: " + res.error); return; }
+    await loadSaved();
+  } catch (e) { alert("Save failed: " + e); }
+}
+
+async function deleteSaved(slug, name) {
+  if (!confirm(`Delete saved scenario "${name || slug}"?`)) return;
+  try {
+    await fetch("/api/scenarios/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug }),
+    });
+    await loadSaved();
+  } catch (e) { alert("Delete failed: " + e); }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function applyFieldVisibility(el, type) {
+  // Shape fields depend on the type; modifier fields are always shown — except
+  // the random-spike modifier, which is redundant (and confusing) on the
+  // "pulses" type that already places explicit spikes. Jitter/seed still stack.
+  const mods = type === "pulses" ? ["jitter", "seed"] : MODIFIER_FIELDS;
+  const show = new Set([...fieldsFor(type), ...mods]);
+  el.querySelectorAll("[data-show]").forEach(r => { r.style.display = show.has(r.dataset.show) ? "" : "none"; });
+}
+
+// ----- "pulses" type: explicit multi-spike timeline -----
+// A pulse is {at, dur, amp} in seconds / q/s. These helpers seed and render the
+// per-spike rows; eval happens in evalCurve()'s "pulses" branch.
+function defaultPulse(c) {
+  const per = effPeriod(c), mq = CONFIG.max_qps;
+  const last = (c.pulses && c.pulses.length) ? c.pulses[c.pulses.length - 1] : null;
+  // Drop the new spike just after the previous one, else a little into the period.
+  const at = last ? Math.min(per, (+last.at || 0) + (+last.dur || 0) + per * 0.05) : per * 0.1;
+  return { at: num(at), dur: num(per / 8), amp: num(0.5 * mq) };
+}
+// Defaults used by "Generate evenly". Stored on the curve so the setup sticks
+// across editor rebuilds. `at` is the start offset of the first spike; the rest
+// are spaced one slot apart. `dur`/`amp` (null = derive from period/max_qps) set
+// the "for" (s) and "q/s" of every generated spike.
+function genDefaults(c) {
+  const per = effPeriod(c), mq = CONFIG.max_qps, n = (c.pulses && c.pulses.length) || 5;
+  const g = c.gen || (c.gen = {});
+  if (g.at == null) g.at = 0;
+  if (g.dur == null) g.dur = num((per / n) * 0.5);
+  if (g.amp == null) g.amp = num(0.5 * mq);
+  return g;
+}
+function genEvenPulses(c, n, opts) {
+  const per = effPeriod(c), mq = CONFIG.max_qps, slot = per / n;
+  const g = opts || {};
+  const start = +g.at || 0;
+  const dur = g.dur != null ? +g.dur : slot * 0.5;
+  const amp = g.amp != null ? +g.amp : 0.5 * mq;
+  const out = [];
+  for (let i = 0; i < n; i++) out.push({ at: num(start + i * slot), dur: num(dur), amp: num(amp) });
+  return out;
+}
+function pulseRowsHTML(fid, c, mq) {
+  const pulses = c.pulses || [];
+  if (!pulses.length) return `<div class="pulse-empty">No spikes yet — add one or generate N evenly-spaced.</div>`;
+  return pulses.map((pl, i) => `
+    <div class="pulse-row" data-fid="${fid}" data-i="${i}">
+      <span class="pn">#${i + 1}</span>
+      <label>at</label><input type="number" min="0" step="0.5" data-pk="at" value="${num(pl.at)}" /><span class="u">s</span>
+      <label>for</label><input type="number" min="0.1" step="0.5" data-pk="dur" value="${num(pl.dur)}" /><span class="u">s</span>
+      <input type="number" min="0" step="0.1" data-pk="amp" value="${num(pl.amp)}" /><span class="u">q/s</span>
+      <button type="button" data-act="pulse-del" data-fid="${fid}" data-i="${i}" title="Remove this spike">✕</button>
+    </div>`).join("");
+}
+
+function buildScnEditors() {
+  const root = document.getElementById("scn-editors");
+  root.innerHTML = "";
+  const tenants = [...CONFIG.tenants].sort((a, b) => b.priority - a.priority);
+  for (const t of tenants) {
+    const fid = t.fairness_id;
+    const c = scnBuilder.curves[fid] || (scnBuilder.curves[fid] = { type: "constant", base: 0.5 * CONFIG.max_qps, amplitude: 0.3 * CONFIG.max_qps, period: scnBuilder.period || 60 });
+    const color = TENANT_COLORS[fid] || getCSS("--accent");
+    const el = document.createElement("div");
+    el.className = "scn-tenant";
+    const mq = CONFIG.max_qps;
+    const gd = genDefaults(c);
+    el.innerHTML = `
+      <div class="scn-row"><div><span class="dot" style="background:${color}"></span><span class="name ${colorClass(fid)}">${fid}</span></div></div>
+      <div class="scn-row"><label title="Length of this tenant's cycle. Its curve repeats every period (independent of the other tenants).">Period (s)</label><input type="number" min="2" max="3600" step="1" data-fid="${fid}" data-k="period" value="${num(c.period || scnBuilder.period)}" /></div>
+      <div class="scn-row"><label>Curve</label>
+        <select data-fid="${fid}" data-k="type">${CURVE_TYPES.map(ct => `<option value="${ct.v}" ${c.type === ct.v ? "selected" : ""}>${ct.label}</option>`).join("")}</select></div>
+      <div class="scn-row" data-show="base"><label>Base q/s</label><input type="number" min="0" step="0.1" data-fid="${fid}" data-k="base" value="${num(c.base)}" /></div>
+      <div class="scn-row" data-show="amplitude"><label>Amplitude q/s</label><input type="number" min="0" step="0.1" data-fid="${fid}" data-k="amplitude" value="${num(c.amplitude)}" /></div>
+      <div class="scn-row" data-show="phase"><label title="Shift the wave along the period (0–1). 0.5 = perfect overlap with the other tier.">Phase · 0.5 = overlap</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="phase" value="${num(c.phase || 0)}" /></div>
+      <div class="scn-row" data-show="pos"><label title="Where in the period the spike happens (0–1).">Spike at</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="pos" value="${num(c.pos == null ? 0.5 : c.pos)}" /></div>
+      <div class="scn-row" data-show="width"><label title="Spike width as a fraction of the period.">Spike width</label><input type="number" min="0.01" max="1" step="0.01" data-fid="${fid}" data-k="width" value="${num(c.width == null ? 0.08 : c.width)}" /></div>
+      <div class="scn-row" data-show="duty"><label title="Fraction of the period that is 'on' (high).">Duty</label><input type="number" min="0.05" max="0.95" step="0.05" data-fid="${fid}" data-k="duty" value="${num(c.duty == null ? 0.5 : c.duty)}" /></div>
+      <div class="scn-row" data-show="spikes" style="margin-top:10px;"><label title="Superimpose this many random pulses per period on top of the shape above. 0 = none.">Random spikes (#)</label><input type="number" min="0" max="50" step="1" data-fid="${fid}" data-k="spikes" value="${c.spikes | 0}" /></div>
+      <div class="scn-row" data-show="spike_amp"><label title="Height of each random spike, in q/s.">↳ spike q/s</label><input type="number" min="0" step="0.1" data-fid="${fid}" data-k="spike_amp" value="${num(c.spike_amp == null ? 0.5 * mq : c.spike_amp)}" /></div>
+      <div class="scn-row" data-show="spike_width"><label title="Width of each random spike as a fraction of the period.">↳ spike width</label><input type="number" min="0.01" max="0.5" step="0.01" data-fid="${fid}" data-k="spike_width" value="${num(c.spike_width == null ? 0.04 : c.spike_width)}" /></div>
+      <div class="scn-row" data-show="jitter"><label title="Random noise band: multiplies the rate by 1±jitter, varying second to second. 0 = smooth.">Jitter (0–1)</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="jitter" value="${num(c.jitter || 0)}" /></div>
+      <div class="scn-row" data-show="seed"><label title="Seed for the random spikes & jitter. Same seed → same 'random' arrangement every replay. Change it to reshuffle.">Random seed</label><input type="number" min="0" max="99999" step="1" data-fid="${fid}" data-k="seed" value="${c.seed == null ? 1 : (c.seed | 0)}" /></div>
+      <div class="scn-row scn-pulses" data-show="pulses">
+        <label title="Script N independent rectangular spikes over the period. Each has its own start time, duration (both in seconds) and height (q/s). Spikes stack on top of Base q/s.">Spike timeline</label>
+        <div class="pulse-list" data-fid="${fid}">${pulseRowsHTML(fid, c, mq)}</div>
+        <div class="pulse-tools">
+          <button type="button" data-act="pulse-add" data-fid="${fid}">+ Add spike</button>
+          <span class="pulse-gen" title="Default shape for evenly-generated spikes: start offset (at), duration (for) and height (q/s). Spacing is the period ÷ N.">N <input type="number" class="pulse-n" min="1" max="50" step="1" value="${(c.pulses && c.pulses.length) || 5}" data-fid="${fid}" />
+            · at <input type="number" class="pulse-gen-at" min="0" step="0.5" value="${num(gd.at)}" data-fid="${fid}" data-gk="at" /><span class="u">s</span>
+            for <input type="number" class="pulse-gen-dur" min="0.1" step="0.5" value="${num(gd.dur)}" data-fid="${fid}" data-gk="dur" /><span class="u">s</span>
+            <input type="number" class="pulse-gen-amp" min="0" step="0.1" value="${num(gd.amp)}" data-fid="${fid}" data-gk="amp" /><span class="u">q/s</span>
+            <button type="button" data-act="pulse-gen" data-fid="${fid}">Generate evenly</button></span>
+        </div>
+      </div>
+    `;
+    root.appendChild(el);
+    applyFieldVisibility(el, c.type);
+    el.querySelectorAll("[data-k]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        const k = inp.dataset.k, f = inp.dataset.fid, cur = scnBuilder.curves[f];
+        cur[k] = (k === "type") ? inp.value : (inp.value === "" ? 0 : +inp.value);
+        if (k === "type") {
+          // Seed a few spikes the first time you switch to "pulses" so the
+          // preview isn't empty, then re-render so the timeline editor appears.
+          if (inp.value === "pulses" && (!cur.pulses || !cur.pulses.length)) cur.pulses = genEvenPulses(cur, 3);
+          activePreset = -1; renderPresets();
+          buildScnEditors();
+          drawPreview("preview");
+          return;
+        }
+        activePreset = -1; renderPresets();
+        drawPreview("preview");
+      });
+    });
+    // Per-spike value edits (at / dur / amp) — mutate in place, no full rebuild.
+    el.querySelectorAll(".pulse-row [data-pk]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        const row = inp.closest(".pulse-row"), cur = scnBuilder.curves[row.dataset.fid];
+        if (!cur.pulses || !cur.pulses[+row.dataset.i]) return;
+        cur.pulses[+row.dataset.i][inp.dataset.pk] = inp.value === "" ? 0 : +inp.value;
+        activePreset = -1; renderPresets();
+        drawPreview("preview");
+      });
+    });
+    // "Generate evenly" defaults (at / for / q/s) — persist on the curve so the
+    // setup survives editor rebuilds. No redraw needed until you hit Generate.
+    el.querySelectorAll("[data-gk]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        const cur = scnBuilder.curves[inp.dataset.fid];
+        (cur.gen || (cur.gen = {}))[inp.dataset.gk] = inp.value === "" ? 0 : +inp.value;
+      });
+    });
+    // Structural spike edits (add / delete / generate) — rebuild the editor.
+    el.querySelectorAll("[data-act]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const cur = scnBuilder.curves[btn.dataset.fid];
+        if (!cur.pulses) cur.pulses = [];
+        const act = btn.dataset.act;
+        if (act === "pulse-add") cur.pulses.push(defaultPulse(cur));
+        else if (act === "pulse-del") cur.pulses.splice(+btn.dataset.i, 1);
+        else if (act === "pulse-gen") {
+          const n = Math.max(1, Math.min(50, (+el.querySelector(`.pulse-n[data-fid="${btn.dataset.fid}"]`).value) || 5));
+          cur.pulses = genEvenPulses(cur, n, cur.gen);
+        } else return;
+        activePreset = -1; renderPresets();
+        buildScnEditors();
+        drawPreview("preview");
+      });
+    });
+  }
+}
+
+// Lock every setup control while a scenario is running, so the running config
+// can't drift out from under the live traffic. Reset is the only way back.
+function setBuilderLocked(locked) {
+  const panel = document.getElementById("scn-builder-panel");
+  if (!panel) return;
+  panel.classList.toggle("locked", locked);
+  panel.querySelectorAll("#scn-editors input, #scn-editors select, #scn-name, #scn-window, #scn-loop")
+    .forEach(el => { el.disabled = locked; });
+  const save = document.getElementById("scn-save");
+  if (save) save.disabled = locked;   // don't save a config mid-run
+}
+
+function updateScnStatus() {
+  const playing = scnState.playing;
+  const paused = !playing && scnPaused;   // run frozen for review
+  // Lock the setup while running, and keep it locked while paused so the frozen
+  // run's config and results stay put until Run (fresh) or Reset (edit).
+  setBuilderLocked(playing || paused);
+
+  // Run is available except while traffic is actively flowing; Pause only makes
+  // sense while running.
+  const play = document.getElementById("scn-play");
+  const pause = document.getElementById("scn-pause");
+  if (play) play.disabled = playing;
+  if (pause) pause.disabled = !playing;
+
+  // Big Setup ↔ Running ↔ Paused banner at the top of the builder.
+  const banner = document.getElementById("scn-mode-banner");
+  if (banner) {
+    banner.classList.toggle("running", playing);
+    banner.classList.toggle("paused", paused);
+    banner.classList.toggle("setup", !playing && !paused);
+    document.getElementById("scn-mode-badge").textContent = playing ? "Running" : paused ? "Paused" : "Setup";
+    document.getElementById("scn-mode-text").textContent = playing
+      ? `Running "${scnState.name || "scenario"}" · ${Math.floor(scnState.elapsed)}s${scnState.loop ? " · looping" : ""}. Editing is locked — press Pause to freeze, or Reset to return to setup.`
+      : paused
+      ? `Paused "${scnState.name || "scenario"}" — review the experiment results above. Press Run for a fresh experiment, or Reset to edit.`
+      : "Build your scenario below, then press Run to start it.";
+  }
+
+  const el = document.getElementById("scn-status");
+  if (!el) return;
+  if (playing) {
+    el.textContent = `▶ ${scnState.name || "running"} · ${Math.floor(scnState.elapsed)}s${scnState.loop ? " · loop" : ""}`;
+    el.style.color = getCSS("--premium");
+  } else if (paused) {
+    el.textContent = "paused";
+    el.style.color = getCSS("--accent");
+  } else {
+    el.textContent = "stopped";
+    el.style.color = getCSS("--muted");
+  }
+}
+
+async function scnPlay() {
+  scnBuilder.name = document.getElementById("scn-name").value;
+  scnBuilder.loop = document.getElementById("scn-loop").checked;
+  // Lock the setup immediately rather than waiting for the next poll.
+  scnPaused = false;
+  scnState = { ...scnState, playing: true, name: scnBuilder.name, loop: scnBuilder.loop, elapsed: 0 };
+  expState = { running: true, name: scnBuilder.name, elapsed: 0, has_result: false };
+  updateScnStatus();
+  updateExpStatus();
+  try {
+    // Every Run is a fresh experiment: clear prior buffers, then start the
+    // traffic and begin accumulating cumulative metrics from zero together.
+    await fetch("/api/reset", { method: "POST" });
+    for (const k in history) history[k] = [];
+    for (const k in rawHistory) rawHistory[k] = [];
+    sampleCursor = null;
+    await fetch("/api/experiment/start", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: scnBuilder.name }),
+    });
+    await fetch("/api/scenario/start", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: scnBuilder.name, period: scnBuilder.period, loop: scnBuilder.loop, curves: scnBuilder.curves }),
+    });
+  } catch (e) {}
+}
+
+// Pause = freeze the run for review: stop the traffic and end the experiment so
+// its final cumulative stats are kept on screen, but DON'T clear the charts or
+// unlock the builder. From here, Run starts fresh or Reset returns to editing.
+async function scnPause() {
+  scnPaused = true;
+  scnState = { ...scnState, playing: false };
+  expState = { ...expState, running: false, has_result: true };
+  updateScnStatus();
+  updateExpStatus();
+  try { await fetch("/api/scenario/stop", { method: "POST" }); } catch (e) {}
+  try { await fetch("/api/experiment/stop", { method: "POST" }); } catch (e) {}
+}
+
+// Reset = return to the initial setup state: stop driving traffic, clear the
+// measured-latency charts/counters, and unlock the builder for editing again.
+async function scnReset() {
+  try { await fetch("/api/scenario/stop", { method: "POST" }); } catch (e) {}
+  try { await fetch("/api/experiment/stop", { method: "POST" }); } catch (e) {}
+  try { await fetch("/api/reset", { method: "POST" }); } catch (e) {}
+  for (const k in history) history[k] = [];
+  for (const k in rawHistory) rawHistory[k] = [];
+  sampleCursor = null;
+  scnPaused = false;
+  scnState = { ...scnState, playing: false, elapsed: 0 };
+  expState = { running: false, name: "", elapsed: 0, has_result: false };
+  updateScnStatus();
+  updateExpStatus();
+  draw();
+}
+
+// A tenant's effective cycle length is its own `period` if set, else the
+// scenario fallback. Mirrored in run_scenario_driver().
+function effPeriod(c) { const p = +(c && c.period) || 0; return p > 0 ? p : (scnBuilder.period || 60); }
+
+// Pick an x-axis label step that keeps a span to <= ~8 ticks. Shared by the
+// traffic plan and the latency chart so the two line up.
+function spanStep(span) {
+  const cands = [5, 10, 15, 20, 30, 60, 120, 300, 600];
+  for (const c of cands) if (span / c <= 8) return c;
+  return Math.ceil(span / 8 / 60) * 60;
+}
+
+// Traffic plan. While a scenario plays, plot the *actual* target q/s each tenant
+// is being driven at over the same trailing window (and time axis) as the
+// measured-latency chart, so the two charts line up moment-for-moment. While
+// stopped, fall back to a design preview of the planned curves over the window.
+function drawPreview(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !CONFIG || !scnBuilder) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || canvas.parentElement.clientWidth;
+  const cssH = 200;
+  canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const padL = 44, padR = 12, padT = 12, padB = 22;
+  const W = cssW - padL - padR, H = cssH - padT - padB;
+  const N = 240;
+  const span = scnWindow;
+  const live = scnState.playing;
+  const now = Date.now(), tMin = now - span * 1000;
+
+  // Phase of a given tenant at fraction `f` through the design-preview window.
+  const phaseAt = (c, f) => (f * span / effPeriod(c)) % 1;
+
+  let yMax = 0;   // auto-fit: grows to the configured/observed traffic peak below
+  if (live) {
+    for (const fid in scnBuilder.curves)
+      for (const p of (history[fid] || []))
+        if (p.t >= tMin && p.target_qps != null && p.target_qps > yMax) yMax = p.target_qps;
+  } else {
+    for (const fid in scnBuilder.curves)
+      for (let i = 0; i <= N; i++) { const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], i / N)); if (v > yMax) yMax = v; }
+  }
+  yMax = niceCeil(Math.max(yMax, 0.1));
+
+  ctx.strokeStyle = getCSS("--line"); ctx.fillStyle = getCSS("--muted");
+  ctx.lineWidth = 1; ctx.font = "11px monospace"; ctx.textBaseline = "middle";
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + H * (i / 4), val = yMax * (1 - i / 4);
+    ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + W, y); ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.textAlign = "right"; ctx.fillText(val.toFixed(val < 10 ? 1 : 0), padL - 8, y);
+  }
+  // x labels: trailing seconds, now on the right (matches the latency chart).
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  const step = spanStep(span);
+  for (let s = 0; s <= span; s += step) {
+    const x = padL + W * (1 - s / span);
+    ctx.fillText("-" + s + "s", x, padT + H + 6);
+  }
+
+  const yOf = v => padT + H * (1 - v / yMax);
+  if (live) {
+    const xOf = t => padL + W * ((t - tMin) / (span * 1000));
+    for (const fid in scnBuilder.curves) {
+      const pts = (history[fid] || []).filter(p => p.t >= tMin && p.target_qps != null);
+      if (!pts.length) continue;
+      ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
+      ctx.beginPath();
+      pts.forEach((p, i) => { const x = xOf(p.t), y = yOf(Math.min(p.target_qps, yMax)); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+      ctx.stroke();
+    }
+  } else {
+    const xOf = f => padL + W * f;   // oldest (left) -> now (right)
+    for (const fid in scnBuilder.curves) {
+      ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
+      ctx.beginPath();
+      for (let i = 0; i <= N; i++) {
+        const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], i / N)), x = xOf(i / N), y = yOf(Math.min(v, yMax));
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+}
+
 function niceCeil(v) {
   if (v <= 0) return 1;
   const mag = Math.pow(10, Math.floor(Math.log10(v)));
   const n = v / mag;
   const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
   return nice * mag;
-}
-
-// Automated Test Runner
-let testRunning = false;
-let testIntervalId = null;
-let testVariationIntervalId = null; // For continuous target variation
-const testScenarioSelect = document.getElementById('test-scenario');
-const runTestBtn = document.getElementById('run-test-btn');
-const stopTestBtn = document.getElementById('stop-test-btn');
-const testStatus = document.getElementById('test-status');
-
-// Spike mode selector
-document.addEventListener('DOMContentLoaded', () => {
-  const spikeModeSelect = document.getElementById('spike-mode');
-  if (spikeModeSelect) {
-    spikeModeSelect.addEventListener('change', (e) => {
-      spikeMode = e.target.value;
-      console.log('Spike mode changed to:', spikeMode);
-    });
-  }
-});
-
-// Test explanations
-const TEST_EXPLANATIONS = {
-  'test1': '<strong>⚠️ REQUIRES MANUAL SETUP</strong><br><strong>Goal:</strong> Prove real GPU consolidation: 2 GPUs → 1 GPU with maintained P95.<br><strong>Setup:</strong> See <code>gpu-consolidation-test/README.md</code> for deployment steps.<br><strong>Phase 1:</strong> Deploy qwen-premium + qwen-standard (2 GPUs, separate endpoints).<br><strong>Phase 2:</strong> Deploy qwen-consolidated (1 GPU, flow control).<br><strong>Success:</strong> Premium P95 stays similar, 50% GPU reduction.',
-  'test2': '<strong>Goal:</strong> Prove premium stays fast when standard saturates.<br><strong>Phases:</strong> Baseline (8+8) → Standard saturates (8+32) → Both saturate (16+32) → Recovery<br><strong>Success:</strong> Premium stays ~200-500ms in phase 2, standard spikes to 1-2s+',
-  'test3': '<strong>Goal:</strong> Verify EPP round-robins fairly between premium tenants.<br><strong>Phases:</strong> Equal (8+8+8) → Tenant-A heavy (24+4+4) → Cooldown<br><strong>Success:</strong> All three premium tenants get similar p95 TTFT despite Tenant-A sending 6x more requests. Fair turns, not proportional throughput.',
-  'test4': '<strong>Goal:</strong> Prove premium bypasses queued standard traffic.<br><strong>What to watch:</strong> Orange builds up and SUSTAINS at ~5s. Then green appears LOW while orange is still high = bypass working!<br><strong>Phases:</strong><br>• 0-20s: 50 standard floods system (orange builds and sustains)<br>• 20-50s: 8 premium arrives WHILE standard still flooding (green stays low, orange stays high)<br>• 50s+: Both stop<br><strong>Success:</strong> Green and orange BOTH visible at same time, with clear separation'
-};
-
-testScenarioSelect.addEventListener('change', () => {
-  const selectedTest = testScenarioSelect.value;
-  runTestBtn.disabled = !selectedTest || testRunning;
-
-  // Show/hide explanation
-  const explanationDiv = document.getElementById('test-explanation');
-  const explanationContent = document.getElementById('test-explanation-content');
-
-  if (selectedTest && TEST_EXPLANATIONS[selectedTest]) {
-    explanationContent.innerHTML = TEST_EXPLANATIONS[selectedTest];
-    explanationDiv.style.display = 'block';
-  } else {
-    explanationDiv.style.display = 'none';
-  }
-});
-
-const TEST_SCENARIOS = {
-  'test1': {
-    name: 'Test 1: GPU Consolidation',
-    duration: 90000, // 1.5 minutes
-    phases: [
-      { time: 0, premium: 8, standard: 8, desc: 'Baseline: 8+8 (simulating 16 GPUs separate)' },
-      { time: 30000, premium: 12, standard: 12, desc: 'Moderate: 12+12 (simulating 12 GPUs consolidated)' },
-      { time: 60000, premium: 8, standard: 8, desc: 'Return to baseline' }
-    ]
-  },
-  'test2': {
-    name: 'Test 2: Priority Differentiation',
-    duration: 120000, // 2 minutes
-    phases: [
-      { time: 0, premium: 8, standard: 8, desc: 'Baseline: 8+8 (healthy)' },
-      { time: 30000, premium: 8, standard: 32, desc: 'Saturate with standard (32)' },
-      { time: 60000, premium: 16, standard: 32, desc: 'Both saturated (16+32)' },
-      { time: 90000, premium: 8, standard: 8, desc: 'Return to baseline' }
-    ]
-  },
-  'test3': {
-    name: 'Test 3: Fairness Validation (Premium Only)',
-    duration: 90000, // 1.5 minutes
-    phases: [
-      { time: 0, targets: {'premium-tenant-a': 8, 'premium-tenant-b': 8, 'premium-tenant-c': 8}, desc: 'Equal load: 8+8+8 premium (all tenants balanced)' },
-      { time: 30000, targets: {'premium-tenant-a': 24, 'premium-tenant-b': 4, 'premium-tenant-c': 4}, desc: 'Tenant-A heavy: 24+4+4 premium (monopolize test)' },
-      { time: 60000, targets: {'premium-tenant-a': 0, 'premium-tenant-b': 0, 'premium-tenant-c': 0}, desc: 'Cooldown (all stop)' }
-    ]
-  },
-  'test4': {
-    name: 'Test 4: Priority Inversion Prevention',
-    duration: 60000, // 1 minute (simplified from 90s)
-    phases: [
-      { time: 0, premium: 0, standard: 50, desc: 'Standard floods (50 concurrent)' },
-      { time: 20000, premium: 8, standard: 50, desc: 'Premium arrives (8 premium + 50 standard)' },
-      { time: 50000, premium: 0, standard: 0, desc: 'Cooldown' }
-    ]
-  }
-};
-
-async function runAutomatedTest(scenarioKey) {
-  const scenario = TEST_SCENARIOS[scenarioKey];
-  if (!scenario) return;
-
-  testRunning = true;
-  runTestBtn.disabled = true;
-  stopTestBtn.disabled = false;
-  testScenarioSelect.disabled = true;
-
-  testStatus.innerHTML = `<span style="color:var(--premium)">▶ Running: ${scenario.name}</span>`;
-
-  const startTime = Date.now();
-  let currentPhaseIndex = 0;
-  let currentPhaseTargets = {}; // Store base targets for current phase
-
-  // Continuous target variation (every 2 seconds)
-  // This creates the spiky traffic Rob wants: "8..9...15..7...10"
-  testVariationIntervalId = setInterval(() => {
-    if (!testRunning) return;
-
-    // Apply spike variation to current phase targets
-    for (const [fid, baseTarget] of Object.entries(currentPhaseTargets)) {
-      if (baseTarget > 0) {
-        setTenantTarget(fid, baseTarget);
-      }
-    }
-  }, 2000);
-
-  testIntervalId = setInterval(() => {
-    const elapsed = Date.now() - startTime;
-
-    // Update status with current phase info
-    const currentPhase = scenario.phases[currentPhaseIndex];
-    const timeRemaining = Math.max(0, Math.round((scenario.duration - elapsed) / 1000));
-    const phaseDesc = currentPhase ? currentPhase.desc : '';
-    testStatus.innerHTML = `<span style="color:var(--premium)">▶ ${scenario.name}</span><br><span style="color:var(--muted); font-size:0.9em;">${phaseDesc} • ${timeRemaining}s remaining</span>`;
-
-    // Check if test should end
-    if (elapsed >= scenario.duration || !testRunning) {
-      clearInterval(testIntervalId);
-      clearInterval(testVariationIntervalId);
-      testIntervalId = null;
-      testVariationIntervalId = null;
-      testRunning = false;
-      runTestBtn.disabled = false;
-      stopTestBtn.disabled = true;
-      testScenarioSelect.disabled = false;
-      testStatus.innerHTML = `<span style="color:var(--muted)">✓ Test completed</span>`;
-
-      // Set all tenants to zero
-      for (const t of CONFIG.tenants) {
-        setTenantTarget(t.fairness_id, 0);
-      }
-      return;
-    }
-
-    // Find current phase
-    const nextPhase = scenario.phases.find((p, i) => i > currentPhaseIndex && elapsed >= p.time);
-    if (nextPhase) {
-      currentPhaseIndex = scenario.phases.indexOf(nextPhase);
-      const phase = scenario.phases[currentPhaseIndex];
-
-      // Update base targets for current phase
-      currentPhaseTargets = {};
-      if (phase.targets) {
-        // New format: explicit per-tenant targets
-        currentPhaseTargets = { ...phase.targets };
-        for (const [fid, target] of Object.entries(phase.targets)) {
-          setTenantTarget(fid, target);
-        }
-      } else {
-        // Old format: aggregate premium/standard
-        currentPhaseTargets = {
-          'premium-tenant-a': phase.premium || 0,
-          'premium-tenant-b': 0,
-          'premium-tenant-c': 0,
-          'standard-tenant-a': phase.standard || 0,
-          'standard-tenant-b': 0
-        };
-        for (const [fid, target] of Object.entries(currentPhaseTargets)) {
-          setTenantTarget(fid, target);
-        }
-      }
-
-      const remaining = Math.ceil((scenario.duration - elapsed) / 1000);
-      testStatus.innerHTML = `<span style="color:var(--accent)">${phase.desc}</span><br><span style="color:var(--muted)">${remaining}s remaining</span>`;
-    }
-  }, 500);
-
-  // Start first phase immediately
-  const firstPhase = scenario.phases[0];
-  if (firstPhase.targets) {
-    currentPhaseTargets = { ...firstPhase.targets };
-    for (const [fid, target] of Object.entries(firstPhase.targets)) {
-      setTenantTarget(fid, target);
-    }
-  } else {
-    currentPhaseTargets = {
-      'premium-tenant-a': firstPhase.premium || 0,
-      'premium-tenant-b': 0,
-      'premium-tenant-c': 0,
-      'standard-tenant-a': firstPhase.standard || 0,
-      'standard-tenant-b': 0
-    };
-    for (const [fid, target] of Object.entries(currentPhaseTargets)) {
-      setTenantTarget(fid, target);
-    }
-  }
-}
-
-function setTenantTarget(fairnessId, value) {
-  const mode = document.querySelector('#mode-seg button.active').dataset.mode;
-  const url = mode === 'concurrency' ? '/api/concurrency' : '/api/qps';
-
-  // Apply spike variation for realism (unless target is 0)
-  const actualTarget = value > 0 ? getSpikyTarget(fairnessId, value) : 0;
-
-  fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fairness_id: fairnessId, target: actualTarget })
-  });
-}
-
-runTestBtn.addEventListener('click', () => {
-  const scenarioKey = testScenarioSelect.value;
-  if (scenarioKey) {
-    runAutomatedTest(scenarioKey);
-  }
-});
-
-stopTestBtn.addEventListener('click', () => {
-  if (testIntervalId) {
-    clearInterval(testIntervalId);
-    testIntervalId = null;
-  }
-  if (testVariationIntervalId) {
-    clearInterval(testVariationIntervalId);
-    testVariationIntervalId = null;
-  }
-  testRunning = false;
-  runTestBtn.disabled = false;
-  stopTestBtn.disabled = true;
-  testScenarioSelect.disabled = false;
-  testStatus.innerHTML = '<span style="color:var(--standard)">⏹ Test stopped</span>';
-
-  // Set to zero
-  for (const t of CONFIG.tenants) {
-    setTenantTarget(t.fairness_id, 0);
-  }
-});
-
-// EPP Config loading
-let configExpanded = false;
-const configToggle = document.getElementById('config-toggle');
-const configArrow = document.getElementById('config-arrow');
-const eppConfigDiv = document.getElementById('epp-config');
-
-configToggle.addEventListener('click', () => {
-  configExpanded = !configExpanded;
-  eppConfigDiv.style.display = configExpanded ? 'block' : 'none';
-  configArrow.textContent = configExpanded ? '▲' : '▼';
-  if (configExpanded && eppConfigDiv.innerHTML.includes('Loading')) {
-    loadEppConfig();
-  }
-});
-
-async function loadEppConfig() {
-  try {
-    const resp = await fetch('/api/epp-config');
-    const config = await resp.json();
-
-    if (config.error) {
-      eppConfigDiv.innerHTML = `<div style="color:var(--red)">Error: ${config.error}</div>`;
-      return;
-    }
-
-    const fc = config.flowControl || {};
-    const ud = config.utilizationDetector || {};
-
-    let html = '<div style="color:var(--muted); margin-bottom:10px;">';
-    html += `<div><b style="color:var(--txt);">Service:</b> ${config.service} (${config.namespace})</div>`;
-    html += '</div>';
-
-    html += '<div style="background:var(--panel2); padding:10px; border-radius:6px; margin-bottom:10px;">';
-    html += '<div style="color:var(--accent); font-weight:600; margin-bottom:6px;">🔍 Saturation Detector Settings</div>';
-    html += `<div><b>Queue Depth Threshold:</b> <span style="color:var(--${ud.queueDepthThreshold ? 'premium' : 'red'})">${ud.queueDepthThreshold !== undefined && ud.queueDepthThreshold !== null ? ud.queueDepthThreshold : 'NOT SET (using defaults)'}</span> ${ud.queueDepthThreshold === 1 ? '✓ Strict' : ''}</div>`;
-    html += `<div><b>KV Cache Util Threshold:</b> ${ud.kvCacheUtilThreshold !== undefined && ud.kvCacheUtilThreshold !== null ? (ud.kvCacheUtilThreshold * 100).toFixed(0) + '%' : 'NOT SET'}</div>`;
-    html += `<div><b>Metrics Staleness:</b> ${ud.metricsStalenessThreshold || 'NOT SET'}</div>`;
-    html += '</div>';
-
-    html += '<div style="background:var(--panel2); padding:10px; border-radius:6px; margin-bottom:10px;">';
-    html += '<div style="color:var(--accent); font-weight:600; margin-bottom:6px;">📊 Global Limits</div>';
-    html += `<div><b>maxRequests:</b> ${fc.maxRequests || 'N/A'}</div>`;
-    html += `<div><b>maxBytes:</b> ${fc.maxBytes ? (fc.maxBytes / 1024 / 1024 / 1024).toFixed(1) + 'GB' : 'N/A'}</div>`;
-    html += `<div><b>defaultRequestTTL:</b> ${fc.defaultRequestTTL || 'N/A'}</div>`;
-    html += '</div>';
-
-    if (fc.priorityBands && fc.priorityBands.length > 0) {
-      html += '<div style="background:var(--panel2); padding:10px; border-radius:6px;">';
-      html += '<div style="color:var(--accent); font-weight:600; margin-bottom:6px;">🎯 Priority Bands</div>';
-      fc.priorityBands.forEach((band, i) => {
-        const colorClass = band.priority >= 100 ? 'premium' : band.priority < 0 ? 'standard' : 'muted';
-        html += `<div style="margin-bottom:6px; padding:6px; background:var(--panel); border-radius:4px;">`;
-        html += `<div style="color:var(--${colorClass}); font-weight:600;">Priority ${band.priority}</div>`;
-        html += `<div><b>maxRequests:</b> ${band.maxRequests || 'N/A'}</div>`;
-        html += `<div><b>maxBytes:</b> ${band.maxBytes ? (band.maxBytes / 1024 / 1024).toFixed(0) + 'MB' : 'N/A'}</div>`;
-        html += `<div><b>Fairness:</b> ${band.fairnessPolicyRef || 'N/A'}</div>`;
-        html += '</div>';
-      });
-      html += '</div>';
-    }
-
-    html += '<div style="margin-top:10px; padding:8px; background:var(--panel2); border-radius:6px; font-size:10px; color:var(--muted);">';
-    html += '<b>Note:</b> To modify config, edit LLMInferenceService YAML';
-    html += '</div>';
-
-    eppConfigDiv.innerHTML = html;
-  } catch (e) {
-    eppConfigDiv.innerHTML = `<div style="color:var(--red)">Failed to load config: ${e.message}</div>`;
-  }
 }
 
 init();
