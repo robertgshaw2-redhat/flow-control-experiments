@@ -242,6 +242,7 @@ class LoadGenerator:
         start_time = time.monotonic()
         ttft: Optional[float] = None
         status_str = "Unknown"
+        output_tokens = 0  # Initialize before try block
 
         self.metrics.record_start(tenant.fairness_id)
 

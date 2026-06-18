@@ -125,31 +125,26 @@
       <!-- Automated Test Runner -->
       <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--line);">
         <h2 style="margin-bottom:10px;">🤖 Auto Test</h2>
+
+        <!-- Spike Mode Control -->
+        <div style="margin-bottom:12px;">
+          <label style="color:var(--muted); font-size:11px; display:block; margin-bottom:4px;">Traffic Pattern:</label>
+          <select id="spike-mode" style="width:100%; font-size:11px;">
+            <option value="sine" selected>Spiky (Sine Wave) - Recommended</option>
+            <option value="bursty">Bursty (Random Spikes)</option>
+            <option value="flat">Flat (No Variation)</option>
+          </select>
+          <div style="font-size:10px; color:var(--muted); margin-top:3px;">
+            Spiky traffic demonstrates flow control value by showing P95 variance
+          </div>
+        </div>
+
         <select id="test-scenario" style="width:100%; margin-bottom:10px;">
-          <option value="">Select a test scenario...</option>
-          <optgroup label="Completed Tests">
-            <option value="test2">Test 2: Priority Differentiation</option>
-            <option value="test3">Test 3: Fairness Validation</option>
-          </optgroup>
-          <optgroup label="Tier 1: Gateway Fundamentals">
-            <option value="test4">Test 4: TTL Expiration</option>
-            <option value="test5">Test 5: Capacity Rejection</option>
-          </optgroup>
-          <optgroup label="Tier 2: Priority & Ordering">
-            <option value="test7">Test 7: Priority Inversion Prevention</option>
-            <option value="test10">Test 10: Batch Job Interference</option>
-          </optgroup>
-          <optgroup label="Tier 3: Stateful Optimization">
-            <option value="test6">Test 6: Prefix Cache-Aware Routing</option>
-          </optgroup>
-          <optgroup label="Plugin Configuration Tests">
-            <option value="test11">Test 11: Queue vs Cache Scoring</option>
-            <option value="test12">Test 12: Bypass vs Strict Queuing</option>
-          </optgroup>
-          <optgroup label="Demos">
-            <option value="saturation">Demo: Gradual Saturation</option>
-            <option value="burst">Demo: Burst Spike</option>
-          </optgroup>
+          <option value="">-- Select Test --</option>
+          <option value="test1">Test 1: GPU Consolidation</option>
+          <option value="test2">Test 2: Priority Differentiation</option>
+          <option value="test3">Test 3: Fairness Validation</option>
+          <option value="test4">Test 4: Priority Inversion Prevention</option>
         </select>
 
         <!-- Test Explanation (collapsible) -->
@@ -252,6 +247,67 @@ const values = { concurrency: {}, qps: {} };
 let metric = "p95_ttft";
 let chartSpan = 60;      // seconds shown on the chart
 let smoothing = 10;      // backend trailing aggregation window (s)
+
+// Per-tenant spike state for independent, realistic traffic patterns
+const tenantSpikeState = {};
+let spikeMode = 'sine'; // 'sine', 'bursty', 'flat'
+
+// Generate realistic spiky traffic that varies over time
+// Exploits overprovisioning gap: provision for P95, median is lower
+function getSpikyTarget(fairnessId, baseTarget) {
+  if (baseTarget === 0 || spikeMode === 'flat') return baseTarget;
+
+  // Initialize state for new tenant
+  if (!tenantSpikeState[fairnessId]) {
+    tenantSpikeState[fairnessId] = {
+      phase: Math.random() * Math.PI * 2,        // Random starting phase (0 to 2π)
+      frequency: 0.05 + Math.random() * 0.15,    // Random frequency (0.05-0.2 Hz)
+      burstCooldown: 0,                           // For bursty mode
+      lastBurstValue: baseTarget                  // For bursty mode
+    };
+  }
+
+  const state = tenantSpikeState[fairnessId];
+  const timestamp = Date.now() / 1000; // Convert to seconds
+
+  if (spikeMode === 'sine') {
+    // Sine wave for smooth spikes over time
+    const wave = Math.sin(timestamp * state.frequency + state.phase);
+
+    // Map wave (-1 to 1) to spike range (70% to 150% of base)
+    // This creates realistic "8...9...15..7...10" patterns Rob described
+    const multiplier = 1.1 + (wave * 0.4);
+
+    // Add small random noise (±5%) to prevent perfectly smooth curves
+    const noise = 0.95 + Math.random() * 0.1;
+
+    return Math.round(baseTarget * multiplier * noise);
+  } else if (spikeMode === 'bursty') {
+    // Bursty traffic: random spikes with cooldown periods
+    if (state.burstCooldown > 0) {
+      state.burstCooldown--;
+      return state.lastBurstValue;
+    }
+
+    // 5% chance per call to start a burst
+    if (Math.random() < 0.05) {
+      state.burstCooldown = 5 + Math.floor(Math.random() * 10); // Burst lasts 5-15 calls
+      state.lastBurstValue = Math.round(baseTarget * (1.5 + Math.random() * 0.5)); // 1.5-2x spike
+      return state.lastBurstValue;
+    } else {
+      // Normal traffic with small variation
+      state.lastBurstValue = Math.round(baseTarget * (0.8 + Math.random() * 0.4)); // 0.8-1.2x
+      return state.lastBurstValue;
+    }
+  }
+
+  return baseTarget; // Fallback
+}
+
+// Legacy function kept for compatibility, now delegates to getSpikyTarget
+function addSpikeVariation(baseTarget) {
+  return baseTarget; // Deprecated: use getSpikyTarget instead
+}
 
 // Per-mode UI knobs: slider bounds/step and how a value is rendered.
 const MODES = {
@@ -710,24 +766,29 @@ function niceCeil(v) {
 // Automated Test Runner
 let testRunning = false;
 let testIntervalId = null;
+let testVariationIntervalId = null; // For continuous target variation
 const testScenarioSelect = document.getElementById('test-scenario');
 const runTestBtn = document.getElementById('run-test-btn');
 const stopTestBtn = document.getElementById('stop-test-btn');
 const testStatus = document.getElementById('test-status');
 
+// Spike mode selector
+document.addEventListener('DOMContentLoaded', () => {
+  const spikeModeSelect = document.getElementById('spike-mode');
+  if (spikeModeSelect) {
+    spikeModeSelect.addEventListener('change', (e) => {
+      spikeMode = e.target.value;
+      console.log('Spike mode changed to:', spikeMode);
+    });
+  }
+});
+
 // Test explanations
 const TEST_EXPLANATIONS = {
+  'test1': '<strong>⚠️ REQUIRES MANUAL SETUP</strong><br><strong>Goal:</strong> Prove real GPU consolidation: 2 GPUs → 1 GPU with maintained P95.<br><strong>Setup:</strong> See <code>gpu-consolidation-test/README.md</code> for deployment steps.<br><strong>Phase 1:</strong> Deploy qwen-premium + qwen-standard (2 GPUs, separate endpoints).<br><strong>Phase 2:</strong> Deploy qwen-consolidated (1 GPU, flow control).<br><strong>Success:</strong> Premium P95 stays similar, 50% GPU reduction.',
   'test2': '<strong>Goal:</strong> Prove premium stays fast when standard saturates.<br><strong>Phases:</strong> Baseline (8+8) → Standard saturates (8+32) → Both saturate (16+32) → Recovery<br><strong>Success:</strong> Premium stays ~200-500ms in phase 2, standard spikes to 1-2s+',
-  'test3': '<strong>Goal:</strong> Verify EPP round-robins fairly between tenants at same priority.<br><strong>Phases:</strong> Equal (8+8+0) → Premium-A monopolizes? (24+4+4) → Standard heavy<br><strong>Success:</strong> Premium-A with 24 requests doesn\'t starve Premium-B/C with 4 each - all get fair share of slots',
-  'test4': '<strong>Goal:</strong> Validate requests expire after TTL when queue saturates.<br><strong>Phases:</strong> Send 64 premium (4x capacity) → Cooldown<br><strong>Success:</strong> 503 responses for requests exceeding TTL (1s), queue doesn\'t grow unbounded',
-  'test5': '<strong>Goal:</strong> Verify hard capacity limits are enforced.<br><strong>Phases:</strong> Send 60 premium + 10 batch (way over limit) → Cooldown<br><strong>Success:</strong> 429 responses when maxRequests exceeded',
-  'test6': '<strong>Goal:</strong> Verify routing considers prefix cache hits for optimal placement.<br><strong>Phases:</strong> Warmup → Steady load → Cooldown<br><strong>Success:</strong> Requests routed to pods with matching cache, lower TTFT for cache hits',
-  'test7': '<strong>Goal:</strong> Ensure high priority bypasses low priority floods.<br><strong>Phases:</strong> Flood 50 standard → 5 premium arrives → Cooldown<br><strong>Success:</strong> Premium bypasses standard queue, low TTFT despite saturation',
-  'test10': '<strong>Goal:</strong> Validate interactive workloads aren\'t delayed by batch processing.<br><strong>Phases:</strong> 20 batch jobs (long prompts) → 16 interactive premium → Cooldown<br><strong>Success:</strong> Interactive not blocked by long-running batch',
-  'test11': '<strong>Goal:</strong> Compare routing with different scoring strategies.<br><strong>Phases:</strong> Baseline load → Cooldown<br><strong>Success:</strong> Observe trade-offs between queue depth and cache hit optimization',
-  'test12': '<strong>Goal:</strong> Validate queueDepthThreshold=1 forces strict queuing.<br><strong>Phases:</strong> Baseline load → Cooldown<br><strong>Success:</strong> No request bypasses queue, saturation detection triggers earlier',
-  'saturation': '<strong>Demo:</strong> Progressive load increase for stakeholder presentations.<br><strong>Phases:</strong> Light (4+4) → At capacity (8+8) → Moderate (12+12) → Heavy (16+16) → Cool down<br><strong>Shows:</strong> System behavior under increasing load',
-  'burst': '<strong>Demo:</strong> Traffic spike resilience demonstration.<br><strong>Phases:</strong> Steady (8+8) → BURST! Standard spikes to 32 → Recovery<br><strong>Shows:</strong> How premium handles sudden standard surge'
+  'test3': '<strong>Goal:</strong> Verify EPP round-robins fairly between premium tenants.<br><strong>Phases:</strong> Equal (8+8+8) → Tenant-A heavy (24+4+4) → Cooldown<br><strong>Success:</strong> All three premium tenants get similar p95 TTFT despite Tenant-A sending 6x more requests. Fair turns, not proportional throughput.',
+  'test4': '<strong>Goal:</strong> Prove premium bypasses queued standard traffic.<br><strong>What to watch:</strong> Orange builds up and SUSTAINS at ~5s. Then green appears LOW while orange is still high = bypass working!<br><strong>Phases:</strong><br>• 0-20s: 50 standard floods system (orange builds and sustains)<br>• 20-50s: 8 premium arrives WHILE standard still flooding (green stays low, orange stays high)<br>• 50s+: Both stop<br><strong>Success:</strong> Green and orange BOTH visible at same time, with clear separation'
 };
 
 testScenarioSelect.addEventListener('change', () => {
@@ -747,6 +808,15 @@ testScenarioSelect.addEventListener('change', () => {
 });
 
 const TEST_SCENARIOS = {
+  'test1': {
+    name: 'Test 1: GPU Consolidation',
+    duration: 90000, // 1.5 minutes
+    phases: [
+      { time: 0, premium: 8, standard: 8, desc: 'Baseline: 8+8 (simulating 16 GPUs separate)' },
+      { time: 30000, premium: 12, standard: 12, desc: 'Moderate: 12+12 (simulating 12 GPUs consolidated)' },
+      { time: 60000, premium: 8, standard: 8, desc: 'Return to baseline' }
+    ]
+  },
   'test2': {
     name: 'Test 2: Priority Differentiation',
     duration: 120000, // 2 minutes
@@ -758,91 +828,21 @@ const TEST_SCENARIOS = {
     ]
   },
   'test3': {
-    name: 'Test 3: Fairness Validation',
+    name: 'Test 3: Fairness Validation (Premium Only)',
     duration: 90000, // 1.5 minutes
     phases: [
-      { time: 0, targets: {'premium-tenant-a': 8, 'premium-tenant-b': 8, 'premium-tenant-c': 0, 'standard-tenant-a': 8, 'standard-tenant-b': 8}, desc: 'Equal within tiers (8+8+0 premium, 8+8 standard)' },
-      { time: 30000, targets: {'premium-tenant-a': 24, 'premium-tenant-b': 4, 'premium-tenant-c': 4, 'standard-tenant-a': 4, 'standard-tenant-b': 4}, desc: 'Premium-A monopolizes? (24+4+4 vs 4+4)' },
-      { time: 60000, targets: {'premium-tenant-a': 4, 'premium-tenant-b': 4, 'premium-tenant-c': 4, 'standard-tenant-a': 16, 'standard-tenant-b': 16}, desc: 'Standard heavy (4+4+4 vs 16+16)' }
-    ]
-  },
-  'saturation': {
-    name: 'Demo: Gradual Saturation',
-    duration: 120000,
-    phases: [
-      { time: 0, premium: 4, standard: 4, desc: 'Light load (4+4)' },
-      { time: 20000, premium: 8, standard: 8, desc: 'At capacity (8+8)' },
-      { time: 40000, premium: 12, standard: 12, desc: 'Moderate overload (12+12)' },
-      { time: 60000, premium: 16, standard: 16, desc: 'Heavy overload (16+16)' },
-      { time: 90000, premium: 4, standard: 4, desc: 'Cool down (4+4)' }
-    ]
-  },
-  'burst': {
-    name: 'Demo: Burst Spike',
-    duration: 90000,
-    phases: [
-      { time: 0, premium: 8, standard: 8, desc: 'Steady state (8+8)' },
-      { time: 20000, premium: 8, standard: 32, desc: '🔥 BURST! Standard spikes to 32' },
-      { time: 50000, premium: 8, standard: 8, desc: 'Recovery (8+8)' }
+      { time: 0, targets: {'premium-tenant-a': 8, 'premium-tenant-b': 8, 'premium-tenant-c': 8}, desc: 'Equal load: 8+8+8 premium (all tenants balanced)' },
+      { time: 30000, targets: {'premium-tenant-a': 24, 'premium-tenant-b': 4, 'premium-tenant-c': 4}, desc: 'Tenant-A heavy: 24+4+4 premium (monopolize test)' },
+      { time: 60000, targets: {'premium-tenant-a': 0, 'premium-tenant-b': 0, 'premium-tenant-c': 0}, desc: 'Cooldown (all stop)' }
     ]
   },
   'test4': {
-    name: 'Test 4: TTL Expiration',
-    duration: 30000,
+    name: 'Test 4: Priority Inversion Prevention',
+    duration: 60000, // 1 minute (simplified from 90s)
     phases: [
-      { time: 0, premium: 64, standard: 0, desc: 'Overload: 64 premium (4x capacity)' },
-      { time: 20000, premium: 0, standard: 0, desc: 'Cooldown (all stop)' }
-    ]
-  },
-  'test5': {
-    name: 'Test 5: Capacity Rejection',
-    duration: 30000,
-    phases: [
-      { time: 0, premium: 60, standard: 10, desc: 'Exceed limits: 60 premium + 10 batch' },
-      { time: 20000, premium: 0, standard: 0, desc: 'Cooldown (all stop)' }
-    ]
-  },
-  'test6': {
-    name: 'Test 6: Prefix Cache-Aware Routing',
-    duration: 120000,
-    phases: [
-      { time: 0, premium: 4, standard: 4, desc: 'Warm up: 4+4' },
-      { time: 30000, premium: 16, standard: 16, desc: 'Steady load: 16+16' },
-      { time: 90000, premium: 4, standard: 4, desc: 'Cooldown: 4+4' }
-    ]
-  },
-  'test7': {
-    name: 'Test 7: Priority Inversion Prevention',
-    duration: 90000,
-    phases: [
-      { time: 0, premium: 0, standard: 50, desc: 'Flood low priority: 50 standard' },
-      { time: 30000, premium: 5, standard: 50, desc: 'High priority arrives: 5 premium' },
-      { time: 60000, premium: 0, standard: 0, desc: 'Cooldown (all stop)' }
-    ]
-  },
-  'test10': {
-    name: 'Test 10: Batch Job Interference',
-    duration: 90000,
-    phases: [
-      { time: 0, premium: 0, standard: 20, desc: 'Batch jobs: 20 standard (long prompts)' },
-      { time: 30000, premium: 16, standard: 20, desc: 'Interactive arrives: 16 premium' },
-      { time: 60000, premium: 0, standard: 0, desc: 'Cooldown (all stop)' }
-    ]
-  },
-  'test11': {
-    name: 'Test 11: Queue vs Cache Scoring',
-    duration: 120000,
-    phases: [
-      { time: 0, premium: 8, standard: 8, desc: 'Baseline load (8+8)' },
-      { time: 90000, premium: 0, standard: 0, desc: 'Cooldown' }
-    ]
-  },
-  'test12': {
-    name: 'Test 12: Bypass vs Strict Queuing',
-    duration: 120000,
-    phases: [
-      { time: 0, premium: 8, standard: 8, desc: 'Baseline load (8+8)' },
-      { time: 90000, premium: 0, standard: 0, desc: 'Cooldown' }
+      { time: 0, premium: 0, standard: 50, desc: 'Standard floods (50 concurrent)' },
+      { time: 20000, premium: 8, standard: 50, desc: 'Premium arrives (8 premium + 50 standard)' },
+      { time: 50000, premium: 0, standard: 0, desc: 'Cooldown' }
     ]
   }
 };
@@ -860,14 +860,36 @@ async function runAutomatedTest(scenarioKey) {
 
   const startTime = Date.now();
   let currentPhaseIndex = 0;
+  let currentPhaseTargets = {}; // Store base targets for current phase
+
+  // Continuous target variation (every 2 seconds)
+  // This creates the spiky traffic Rob wants: "8..9...15..7...10"
+  testVariationIntervalId = setInterval(() => {
+    if (!testRunning) return;
+
+    // Apply spike variation to current phase targets
+    for (const [fid, baseTarget] of Object.entries(currentPhaseTargets)) {
+      if (baseTarget > 0) {
+        setTenantTarget(fid, baseTarget);
+      }
+    }
+  }, 2000);
 
   testIntervalId = setInterval(() => {
     const elapsed = Date.now() - startTime;
 
+    // Update status with current phase info
+    const currentPhase = scenario.phases[currentPhaseIndex];
+    const timeRemaining = Math.max(0, Math.round((scenario.duration - elapsed) / 1000));
+    const phaseDesc = currentPhase ? currentPhase.desc : '';
+    testStatus.innerHTML = `<span style="color:var(--premium)">▶ ${scenario.name}</span><br><span style="color:var(--muted); font-size:0.9em;">${phaseDesc} • ${timeRemaining}s remaining</span>`;
+
     // Check if test should end
     if (elapsed >= scenario.duration || !testRunning) {
       clearInterval(testIntervalId);
+      clearInterval(testVariationIntervalId);
       testIntervalId = null;
+      testVariationIntervalId = null;
       testRunning = false;
       runTestBtn.disabled = false;
       stopTestBtn.disabled = true;
@@ -887,19 +909,26 @@ async function runAutomatedTest(scenarioKey) {
       currentPhaseIndex = scenario.phases.indexOf(nextPhase);
       const phase = scenario.phases[currentPhaseIndex];
 
-      // Apply phase settings (support both old and new format)
+      // Update base targets for current phase
+      currentPhaseTargets = {};
       if (phase.targets) {
         // New format: explicit per-tenant targets
+        currentPhaseTargets = { ...phase.targets };
         for (const [fid, target] of Object.entries(phase.targets)) {
           setTenantTarget(fid, target);
         }
       } else {
         // Old format: aggregate premium/standard
-        setTenantTarget('premium-tenant-a', phase.premium || 0);
-        setTenantTarget('premium-tenant-b', 0);
-        setTenantTarget('premium-tenant-c', 0);
-        setTenantTarget('standard-tenant-a', phase.standard || 0);
-        setTenantTarget('standard-tenant-b', 0);
+        currentPhaseTargets = {
+          'premium-tenant-a': phase.premium || 0,
+          'premium-tenant-b': 0,
+          'premium-tenant-c': 0,
+          'standard-tenant-a': phase.standard || 0,
+          'standard-tenant-b': 0
+        };
+        for (const [fid, target] of Object.entries(currentPhaseTargets)) {
+          setTenantTarget(fid, target);
+        }
       }
 
       const remaining = Math.ceil((scenario.duration - elapsed) / 1000);
@@ -910,12 +939,21 @@ async function runAutomatedTest(scenarioKey) {
   // Start first phase immediately
   const firstPhase = scenario.phases[0];
   if (firstPhase.targets) {
+    currentPhaseTargets = { ...firstPhase.targets };
     for (const [fid, target] of Object.entries(firstPhase.targets)) {
       setTenantTarget(fid, target);
     }
   } else {
-    setTenantTarget('premium-tenant-a', firstPhase.premium || 0);
-    setTenantTarget('standard-tenant-a', firstPhase.standard || 0);
+    currentPhaseTargets = {
+      'premium-tenant-a': firstPhase.premium || 0,
+      'premium-tenant-b': 0,
+      'premium-tenant-c': 0,
+      'standard-tenant-a': firstPhase.standard || 0,
+      'standard-tenant-b': 0
+    };
+    for (const [fid, target] of Object.entries(currentPhaseTargets)) {
+      setTenantTarget(fid, target);
+    }
   }
 }
 
@@ -923,10 +961,13 @@ function setTenantTarget(fairnessId, value) {
   const mode = document.querySelector('#mode-seg button.active').dataset.mode;
   const url = mode === 'concurrency' ? '/api/concurrency' : '/api/qps';
 
+  // Apply spike variation for realism (unless target is 0)
+  const actualTarget = value > 0 ? getSpikyTarget(fairnessId, value) : 0;
+
   fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fairness_id: fairnessId, target: value })
+    body: JSON.stringify({ fairness_id: fairnessId, target: actualTarget })
   });
 }
 
@@ -941,6 +982,10 @@ stopTestBtn.addEventListener('click', () => {
   if (testIntervalId) {
     clearInterval(testIntervalId);
     testIntervalId = null;
+  }
+  if (testVariationIntervalId) {
+    clearInterval(testVariationIntervalId);
+    testVariationIntervalId = null;
   }
   testRunning = false;
   runTestBtn.disabled = false;
