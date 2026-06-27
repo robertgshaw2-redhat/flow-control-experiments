@@ -1414,6 +1414,8 @@ function drawLatency(canvasId, cssH, yLabelId, span) {
       const isSwitched = switchTime && last.t >= switchTime;
       const color = isSwitched ? TENANT_COLORS["premium-tenant-b"] : "#0891b2";
       const label = isSwitched ? "qwen-a" : "qwen-b";
+      // Debug logging (will remove after fix)
+      if (Math.random() < 0.01) console.log('[Label Debug]', {switchTime, lastT: last.t, isSwitched, label});
       ctx.fillStyle = color;
       // Draw dot ON the line
       ctx.beginPath();
@@ -2595,6 +2597,8 @@ function drawLiveQPS(canvasId, cssH, yLabelId, span) {
       const isSwitched = switchTime && last.t >= switchTime;
       const color = isSwitched ? TENANT_COLORS["premium-tenant-b"] : "#0891b2";
       const label = isSwitched ? "qwen-a" : "qwen-b";
+      // Debug logging (will remove after fix)
+      if (Math.random() < 0.01) console.log('[Label Debug]', {switchTime, lastT: last.t, isSwitched, label});
       ctx.fillStyle = color;
       // Draw dot ON the line
       ctx.beginPath();
