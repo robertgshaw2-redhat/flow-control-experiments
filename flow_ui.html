@@ -1217,8 +1217,8 @@ function drawScenarioChart() {
   const controlsEl = document.getElementById("scn-latency-controls");
   if (controlsEl) controlsEl.style.display = (isRunning || hasData) ? "" : "none";
 
-  // ALWAYS draw QPS chart (preview when stopped, live QPS when running)
-  if (isRunning) {
+  // Draw QPS chart: show live data if running OR if we have historical data
+  if (isRunning || hasData) {
     drawLiveQPS("scn-qps-chart", 240, "scn-qps-y-label", scnWindow);
   } else {
     drawPreview("scn-qps-chart");
