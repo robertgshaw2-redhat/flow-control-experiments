@@ -1523,15 +1523,15 @@ function buildPresets() {
         "premium-tenant-a": { type: "sine", base: 15, amplitude: 3, phase: 0, period: 20 },
 
         // Standard: gradual ramp up to heavy sustained flood, then taper off
-        // 0-20s: ramp from 10 → 30
-        // 20-30s: spike from 30 → 100
-        // 30-90s: sustained high load at 100 (60 seconds at peak)
-        // 90-120s: taper down from 100 → 10
+        // 0-15s: ramp from 10 → 30
+        // 15-25s: spike from 30 → 120
+        // 25-100s: sustained high load at 120 (75 seconds at peak)
+        // 100-120s: taper down from 120 → 10
         "standard-tenant-a": { type: "pulses", base: 10, period: 120, pulses: [
-          { at: 0, dur: 20, amp: 20 },    // 0-20s: ramp to 30
-          { at: 20, dur: 10, amp: 70 },   // 20-30s: spike to 100
-          { at: 30, dur: 60, amp: 90 },   // 30-90s: sustained at 100 (60s plateau)
-          { at: 90, dur: 30, amp: 0 }     // 90-120s: taper to 10
+          { at: 0, dur: 15, amp: 20 },    // 0-15s: ramp to 30
+          { at: 15, dur: 10, amp: 90 },   // 15-25s: spike to 120
+          { at: 25, dur: 75, amp: 110 },  // 25-100s: sustained at 120 (75s plateau)
+          { at: 100, dur: 20, amp: 0 }    // 100-120s: taper to 10
         ]},
       },
     },
