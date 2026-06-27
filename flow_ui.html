@@ -1545,16 +1545,15 @@ function buildPresets() {
         { until: 150, label: "Tenant-a spikes (fairness maintained despite imbalance)" }
       ],
       curves: {
-        // Tenant-a: 8 conc baseline, spikes to 20 at 90s
-        "premium-tenant-a": { type: "pulses", base: 8, period: 150, pulses: [
-          { at: 90, dur: 60, amp: 12 }  // 90-150s: spike to 20
-        ]},
-        // Tenant-b: constant 10 throughout (slightly different from a)
-        "premium-tenant-b": { type: "pulses", base: 10, period: 150, pulses: [] },
-        // Tenant-c: starts at 0, ramps to 12 at 30s
-        "premium-tenant-c": { type: "pulses", base: 0, period: 150, pulses: [
-          { at: 30, dur: 120, amp: 12 }  // 30-150s: runs at 12
-        ]},
+        // All three tenants use noisy sinusoidal patterns with phase offsets for visibility
+        // Tenant-a: starts immediately, base load with spike at 90s
+        "premium-tenant-a": { type: "sine", base: 12, amplitude: 4, phase: 0, period: 20, jitter: 0.2, spikes: 2, spike_amp: 6, seed: 101 },
+
+        // Tenant-b: starts immediately, slightly different pattern
+        "premium-tenant-b": { type: "sine", base: 10, amplitude: 4, phase: 0.35, period: 20, jitter: 0.2, spikes: 2, spike_amp: 5, seed: 202 },
+
+        // Tenant-c: lower base, delayed start (server will stage this to start at 30s)
+        "premium-tenant-c": { type: "sine", base: 10, amplitude: 3, phase: 0.7, period: 20, jitter: 0.2, spikes: 1, spike_amp: 4, seed: 303 },
       },
     },
     {

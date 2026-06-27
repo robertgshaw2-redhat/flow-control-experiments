@@ -1021,22 +1021,23 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         session: aiohttp.ClientSession = app["session"]
         endpoint = app["args"].url
 
-        # Tenant A: starts at 8, spikes to 20 at 90s
+        # All three tenants use noisy sinusoidal patterns with phase offsets
+        # Tenant A: base 12, noisy sine
         gen_a = SharedRequestGenerator(
             fairness_id="premium-tenant-a",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=8,
+            base_concurrency=12,
             metrics=metrics,
             session=session,
-            traffic_pattern="concurrent",
+            traffic_pattern="noisy_sinusoidal",
             model_name="Qwen/Qwen2.5-0.5B-Instruct",
             input_tokens=100,
             output_tokens=100,
             phase_offset=0.0
         )
 
-        # Tenant B: constant at 10
+        # Tenant B: base 10, phase offset 0.35
         gen_b = SharedRequestGenerator(
             fairness_id="premium-tenant-b",
             endpoint=endpoint,
@@ -1044,35 +1045,44 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             base_concurrency=10,
             metrics=metrics,
             session=session,
-            traffic_pattern="concurrent",
+            traffic_pattern="noisy_sinusoidal",
             model_name="Qwen/Qwen2.5-0.5B-Instruct",
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0
+            phase_offset=0.35
         )
 
-        # Tenant C: starts at 30s, ramps to 12
+        # Tenant C: base 10, phase offset 0.7 (server will stage start at 30s)
         gen_c = SharedRequestGenerator(
             fairness_id="premium-tenant-c",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=0,  # Starts at 0, will be set by external_rate
+            base_concurrency=10,
             metrics=metrics,
             session=session,
-            traffic_pattern="concurrent",
+            traffic_pattern="noisy_sinusoidal",
             model_name="Qwen/Qwen2.5-0.5B-Instruct",
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0
+            phase_offset=0.7
         )
 
         control["test3_gen_a"] = gen_a
         control["test3_gen_b"] = gen_b
         control["test3_gen_c"] = gen_c
 
+        # Start tenant-a and tenant-b immediately
         app["shared_gen_task_test3_a"] = asyncio.create_task(gen_a.run())
         app["shared_gen_task_test3_b"] = asyncio.create_task(gen_b.run())
-        app["shared_gen_task_test3_c"] = asyncio.create_task(gen_c.run())
+
+        # Stage tenant-c to start at 30s
+        async def start_tenant_c_delayed():
+            print("[Test 3] Waiting 30s to start premium-tenant-c...")
+            await asyncio.sleep(30)
+            print("[Test 3] Starting premium-tenant-c now")
+            app["shared_gen_task_test3_c"] = asyncio.create_task(gen_c.run())
+
+        asyncio.create_task(start_tenant_c_delayed())
 
         async def auto_stop_test3():
             await asyncio.sleep(150)
@@ -1084,14 +1094,11 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         asyncio.create_task(auto_stop_test3())
         app["shared_generators"] = [gen_a, gen_b, gen_c]
 
+        # Update curves to match UI sine patterns with jitter/spikes
         curves = {
-            "premium-tenant-a": {"type": "pulses", "base": 8, "period": 150, "pulses": [
-                {"at": 90, "dur": 60, "amp": 12}  # Spikes to 20 at 90s
-            ]},
-            "premium-tenant-b": {"type": "pulses", "base": 10, "period": 150, "pulses": []},
-            "premium-tenant-c": {"type": "pulses", "base": 0, "period": 150, "pulses": [
-                {"at": 30, "dur": 120, "amp": 12}  # Starts at 30s, ramps to 12
-            ]},
+            "premium-tenant-a": {"type": "sine", "base": 12, "amplitude": 4, "phase": 0, "period": 20, "jitter": 0.2, "spikes": 2, "spike_amp": 6, "seed": 101},
+            "premium-tenant-b": {"type": "sine", "base": 10, "amplitude": 4, "phase": 0.35, "period": 20, "jitter": 0.2, "spikes": 2, "spike_amp": 5, "seed": 202},
+            "premium-tenant-c": {"type": "sine", "base": 10, "amplitude": 3, "phase": 0.7, "period": 20, "jitter": 0.2, "spikes": 1, "spike_amp": 4, "seed": 303},
         }
         control["mode"] = "qps"
         control["scenario"].update(
