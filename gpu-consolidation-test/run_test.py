@@ -387,8 +387,8 @@ def parse_args():
         "--traffic-pattern",
         type=str,
         default="concurrent",
-        choices=["concurrent", "sinusoidal"],
-        help="Traffic pattern: concurrent (constant) or sinusoidal (varying)"
+        choices=["concurrent", "sinusoidal", "noisy_sinusoidal"],
+        help="Traffic pattern: concurrent (constant), sinusoidal (smooth wave), or noisy_sinusoidal (production-like)"
     )
 
     parser.add_argument(
