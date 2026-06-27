@@ -1524,18 +1524,16 @@ function buildPresets() {
         // Premium: noisy sine wave around 15 (realistic variability, higher baseline)
         "premium-tenant-a": { type: "sine", base: 15, amplitude: 3, phase: 0, period: 20 },
 
-        // Standard: gradual ramp up to heavy flood, then ramp down (realistic traffic spike)
-        // 0-30s: ramp from 10 → 20
-        // 30-60s: spike from 20 → 60 (heavy flood)
-        // 60-75s: stay at 60 (flood peak)
-        // 75-105s: ramp down 60 → 10 (flood subsides)
-        // 105-120s: baseline at 10
+        // Standard: gradual ramp up to heavy sustained flood, then taper off
+        // 0-20s: ramp from 10 → 30
+        // 20-30s: spike from 30 → 100
+        // 30-90s: sustained high load at 100 (60 seconds at peak)
+        // 90-120s: taper down from 100 → 10
         "standard-tenant-a": { type: "pulses", base: 10, period: 120, pulses: [
-          { at: 0, dur: 30, amp: 10 },    // 0-30s: ramp to 20
-          { at: 30, dur: 30, amp: 40 },   // 30-60s: spike to 60
-          { at: 60, dur: 15, amp: 50 },   // 60-75s: peak at 60
-          { at: 75, dur: 30, amp: 25 },   // 75-105s: ramp down to 35
-          { at: 105, dur: 15, amp: 0 }    // 105-120s: back to 10
+          { at: 0, dur: 20, amp: 20 },    // 0-20s: ramp to 30
+          { at: 20, dur: 10, amp: 70 },   // 20-30s: spike to 100
+          { at: 30, dur: 60, amp: 90 },   // 30-90s: sustained at 100 (60s plateau)
+          { at: 90, dur: 30, amp: 0 }     // 90-120s: taper to 10
         ]},
       },
     },
