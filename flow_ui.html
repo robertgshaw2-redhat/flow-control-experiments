@@ -1244,7 +1244,22 @@ function drawLatency(canvasId, cssH, yLabelId, span) {
   const padL = 52, padR = 12, padT = 12, padB = 24;
   const W = cssW - padL - padR, H = cssH - padT - padB;
   const now = Date.now();
-  const tMin = now - span * 1000, tMax = now;
+
+  // Auto-adjust time window: if we have less data than the full span, zoom to fit
+  let actualSpan = span;
+  let earliestData = now;
+  for (const fid in history) {
+    if (history[fid].length > 0) {
+      earliestData = Math.min(earliestData, history[fid][0].t);
+    }
+  }
+  const dataAge = (now - earliestData) / 1000; // seconds of data we have
+  if (dataAge < span * 0.9) {
+    // We have less than 90% of the window filled, zoom to fit with 10% padding
+    actualSpan = Math.max(10, Math.ceil(dataAge * 1.1));
+  }
+
+  const tMin = now - actualSpan * 1000, tMax = now;
 
   const yLabelEl = document.getElementById(yLabelId);
   if (yLabelEl) yLabelEl.textContent = METRIC_LABELS[metric];
@@ -1272,9 +1287,9 @@ function drawLatency(canvasId, cssH, yLabelId, span) {
   }
   // x labels (relative seconds, now on the right)
   ctx.textAlign = "center"; ctx.textBaseline = "top";
-  const step = spanStep(span);
-  for (let s = 0; s <= span; s += step) {
-    const x = padL + W * (1 - s / span);
+  const step = spanStep(actualSpan);
+  for (let s = 0; s <= actualSpan; s += step) {
+    const x = padL + W * (1 - s / actualSpan);
     ctx.fillText("-" + s + "s", x, padT + H + 6);
   }
 
@@ -2433,7 +2448,22 @@ function drawLiveQPS(canvasId, cssH, yLabelId, span) {
 
   const padL = 44, padR = 12, padT = 12, padB = 22;
   const W = cssW - padL - padR, H = cssH - padT - padB;
-  const now = Date.now(), tMin = now - span * 1000;
+  const now = Date.now();
+
+  // Auto-adjust time window to fit actual data
+  let actualSpan = span;
+  let earliestData = now;
+  for (const fid in history) {
+    if (history[fid].length > 0) {
+      earliestData = Math.min(earliestData, history[fid][0].t);
+    }
+  }
+  const dataAge = (now - earliestData) / 1000;
+  if (dataAge < span * 0.9) {
+    actualSpan = Math.max(10, Math.ceil(dataAge * 1.1));
+  }
+
+  const tMin = now - actualSpan * 1000;
 
   // Find max QPS (only from active tenants)
   const activeTenants = TEST_TENANT_CONFIGS[scnBuilder.name] || Object.keys(scnBuilder.curves);
@@ -2456,9 +2486,9 @@ function drawLiveQPS(canvasId, cssH, yLabelId, span) {
 
   // X-axis labels
   ctx.textAlign = "center"; ctx.textBaseline = "top";
-  const step = spanStep(span);
-  for (let s = 0; s <= span; s += step) {
-    const x = padL + W * (1 - s / span);
+  const step = spanStep(actualSpan);
+  for (let s = 0; s <= actualSpan; s += step) {
+    const x = padL + W * (1 - s / actualSpan);
     ctx.fillText("-" + s + "s", x, padT + H + 6);
   }
 
@@ -2614,7 +2644,8 @@ function niceCeil(v) {
   if (v <= 0) return 1;
   const mag = Math.pow(10, Math.floor(Math.log10(v)));
   const n = v / mag;
-  const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  // Tighter scaling: add 1.5 and 2.5 steps for better fit
+  const nice = n <= 1 ? 1 : n <= 1.5 ? 1.5 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10;
   return nice * mag;
 }
 
