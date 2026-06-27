@@ -40,11 +40,37 @@ import json
 import math
 import os
 import re
+import sys
 import time
 from typing import Dict, List, Set
 
 import aiohttp
 from aiohttp import web
+
+# Import shared traffic generator if available
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "gpu-consolidation-test"))
+    from traffic_generator import RequestGenerator as SharedRequestGenerator
+    SHARED_GENERATOR_AVAILABLE = True
+except ImportError:
+    SHARED_GENERATOR_AVAILABLE = False
+
+
+# Adapter to make UI server's metrics compatible with shared generator
+class MetricsAdapter:
+    """Adapts UI server metrics to match shared generator's interface."""
+    def __init__(self, ui_metrics):
+        self.ui_metrics = ui_metrics
+
+    def record_start(self, tenant_id: str):
+        """Record request start."""
+        self.ui_metrics.record_start(tenant_id)
+
+    def record_end(self, tenant_id: str, status: str, ttft: float, duration: float):
+        """Record completed request in UI metrics."""
+        # UI metrics expects: fairness_id, status (string), ttft, duration
+        print(f"[MetricsAdapter] Recording: tenant={tenant_id}, status={status}, ttft={ttft}, duration={duration}", flush=True)
+        self.ui_metrics.record(tenant_id, status, ttft, duration)
 
 # Reuse the load-generation engine and metrics from the CLI demo verbatim so the
 # two tools drive traffic identically.
@@ -436,32 +462,56 @@ async def run_scenario_driver(control: dict, stop_event: asyncio.Event) -> None:
             period = max(1.0, float(scn["period"]))
             curves = scn["curves"]
 
-            # Each tenant cycles on its own period (curve["period"]), falling back
-            # to the scenario default. The playhead/non-loop window spans the
-            # longest period so a faster tenant repeats inside it. Mirrored in the
-            # browser's effPeriod()/windowPeriod().
-            def eff_period(curve: dict) -> float:
-                cp = float(curve.get("period") or 0.0)
-                return min(max(1.0, cp if cp > 0 else period), 3600.0)
-
-            window = period
-            for curve in curves.values():
-                window = max(window, eff_period(curve))
-
-            if not scn["loop"] and elapsed >= window:
-                for fid in rates:
-                    rates[fid] = 0.0
-                scn["playing"] = False
-                scn["elapsed"] = window
-                scn["phase"] = 1.0
-            else:
+            # Skip rate updates if using shared generator (GPU Consolidation test)
+            # The shared generator handles actual traffic, but we still need to populate
+            # rates with the curve values for the QPS graph display
+            if scn.get("using_shared_generator"):
                 scn["elapsed"] = elapsed
-                scn["phase"] = (elapsed % window) / window if scn["loop"] else min(elapsed / window, 1.0)
+                scn["phase"] = min(elapsed / period, 1.0)
+
+                # Evaluate curves for display purposes only (not for load generation)
+                def eff_period(curve: dict) -> float:
+                    cp = float(curve.get("period") or 0.0)
+                    return min(max(1.0, cp if cp > 0 else period), 3600.0)
+
                 for fid, curve in curves.items():
                     if fid in rates:
                         eff = eff_period(curve)
-                        p = (elapsed % eff) / eff if scn["loop"] else min(elapsed / eff, 1.0)
-                        rates[fid] = eval_curve(curve, p)
+                        # For GPU Consolidation: tenant-b starts at t=120s
+                        if fid == "premium-tenant-b" and elapsed < 120:
+                            rates[fid] = 0.0  # Not started yet
+                        else:
+                            # Always use modulo for curves so they keep oscillating
+                            p = (elapsed % eff) / eff
+                            rates[fid] = eval_curve(curve, p)
+            else:
+                # Normal scenario driver logic
+                # Each tenant cycles on its own period (curve["period"]), falling back
+                # to the scenario default. The playhead/non-loop window spans the
+                # longest period so a faster tenant repeats inside it. Mirrored in the
+                # browser's effPeriod()/windowPeriod().
+                def eff_period(curve: dict) -> float:
+                    cp = float(curve.get("period") or 0.0)
+                    return min(max(1.0, cp if cp > 0 else period), 3600.0)
+
+                window = period
+                for curve in curves.values():
+                    window = max(window, eff_period(curve))
+
+                if not scn["loop"] and elapsed >= window:
+                    for fid in rates:
+                        rates[fid] = 0.0
+                    scn["playing"] = False
+                    scn["elapsed"] = window
+                    scn["phase"] = 1.0
+                else:
+                    scn["elapsed"] = elapsed
+                    scn["phase"] = (elapsed % window) / window if scn["loop"] else min(elapsed / window, 1.0)
+                    for fid, curve in curves.items():
+                        if fid in rates:
+                            eff = eff_period(curve)
+                            p = (elapsed % eff) / eff if scn["loop"] else min(elapsed / eff, 1.0)
+                            rates[fid] = eval_curve(curve, p)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=TICK_SEC)
             break
@@ -721,6 +771,8 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
     Switches the server into QPS mode; the scenario driver then takes over the
     per-tenant rates until /api/scenario/stop (or, for non-looping runs, the
     period elapses).
+
+    Special: GPU Consolidation uses the shared traffic generator module.
     """
     app = request.app
     control: dict = app["control"]
@@ -729,6 +781,91 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+
+    name = str(body.get("name", ""))[:120]
+
+    # GPU Consolidation test uses shared traffic_generator.py
+    if ("GPU Consolidation" in name or "Test 1" in name) and SHARED_GENERATOR_AVAILABLE:
+        # Launch staged test using shared module
+        ui_metrics = app["metrics"]
+        metrics = MetricsAdapter(ui_metrics)  # Wrap UI metrics with adapter
+        session: aiohttp.ClientSession = app["session"]
+
+        # Create shared generators for both tenants
+        endpoint = app["args"].url
+        generators = []
+
+        # Tenant A - runs for full duration with 20s sinusoidal period
+        gen_a = SharedRequestGenerator(
+            fairness_id="premium-tenant-a",
+            endpoint=endpoint,
+            priority=100,
+            base_concurrency=8,
+            metrics=metrics,
+            session=session,
+            traffic_pattern="sinusoidal",  # 0-16 concurrency, 20s period
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            input_tokens=100,
+            output_tokens=100
+        )
+
+        # Tenant B - starts after 2 minutes with same 20s sinusoidal period
+        gen_b = SharedRequestGenerator(
+            fairness_id="premium-tenant-b",
+            endpoint=endpoint,
+            priority=100,
+            base_concurrency=8,
+            metrics=metrics,
+            session=session,
+            traffic_pattern="sinusoidal",  # 0-16 concurrency, 20s period
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            input_tokens=100,
+            output_tokens=100
+        )
+
+        # Start tenant A immediately, B after 120s
+        app["shared_gen_task_a"] = asyncio.create_task(gen_a.run())
+
+        async def start_tenant_b_later():
+            await asyncio.sleep(120)
+            app["shared_gen_task_b"] = asyncio.create_task(gen_b.run())
+
+        asyncio.create_task(start_tenant_b_later())
+        app["shared_generators"] = [gen_a, gen_b]
+
+        # Mark scenario as playing and set up curves for QPS graph display
+        # Even though shared generators handle actual requests, we need curves
+        # for the UI to populate target_qps in history for the live QPS graph
+        # Set using_shared_generator flag so scenario driver doesn't update rates
+        curves = {
+            "premium-tenant-a": {
+                "type": "sine",
+                "base": 10,
+                "amplitude": 4,
+                "phase": 0,
+                "period": 20
+            },
+            "premium-tenant-b": {
+                "type": "sine",
+                "base": 10,
+                "amplitude": 4,
+                "phase": 0.25,
+                "period": 20
+            }
+        }
+        control["scenario"].update(
+            playing=True,
+            name=name,
+            period=240,  # 4 minutes total
+            loop=False,
+            start=time.monotonic(),
+            elapsed=0.0,
+            phase=0.0,
+            curves=curves,
+            using_shared_generator=True,  # Flag to skip rate updates in scenario driver
+        )
+
+        return web.json_response({"ok": True, "name": name, "using_shared_generator": True})
 
     curves_in = body.get("curves") or {}
     if not isinstance(curves_in, dict):
@@ -766,6 +903,21 @@ async def handle_scenario_stop(request: web.Request) -> web.Response:
     control["scenario"]["playing"] = False
     for fid in control["rates"]:
         control["rates"][fid] = 0.0
+
+    # Stop shared generator tasks if running (GPU Consolidation test)
+    if "shared_generators" in app:
+        for gen in app["shared_generators"]:
+            gen.stop()
+        # Cancel tasks
+        if "shared_gen_task_a" in app:
+            app["shared_gen_task_a"].cancel()
+        if "shared_gen_task_b" in app:
+            app["shared_gen_task_b"].cancel()
+        # Clean up
+        app.pop("shared_generators", None)
+        app.pop("shared_gen_task_a", None)
+        app.pop("shared_gen_task_b", None)
+
     return web.json_response({"ok": True})
 
 

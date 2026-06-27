@@ -1,0 +1,58 @@
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceService
+metadata:
+  name: qwen-premium
+  namespace: llm-test
+  labels:
+    test: gpu-consolidation
+    phase: phase1
+  annotations:
+    serving.kserve.io/enable-prefix-cache: "true"
+spec:
+  model:
+    name: Qwen/Qwen2.5-0.5B-Instruct
+    uri: hf://Qwen/Qwen2.5-0.5B-Instruct
+  replicas: 1  # 1 GPU for premium-only traffic
+  router:
+    gateway: {}
+    route: {}
+    scheduler:
+      config:
+        inline:
+          apiVersion: inference.networking.x-k8s.io/v1alpha1
+          # No flow control needed - dedicated endpoint for premium tier only
+          kind: EndpointPickerConfig
+          plugins:
+          - type: queue-scorer
+          - type: prefix-cache-scorer
+          - type: max-score-picker
+          schedulingProfiles:
+          - name: default
+            plugins:
+            - pluginRef: queue-scorer
+              weight: 2
+            - pluginRef: prefix-cache-scorer
+              weight: 3
+            - pluginRef: max-score-picker
+      template:
+        containers:
+        - image: ghcr.io/llm-d/llm-d-inference-scheduler:v0.8.0
+          name: main
+        - name: tokenizer
+        imagePullSecrets:
+        - name: rhai-pull-secret
+        - name: ghcr-pull-secret
+  template:
+    containers:
+    - name: main
+      resources:
+        limits:
+          cpu: "4"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+        requests:
+          cpu: "2"
+          memory: 8Gi
+          nvidia.com/gpu: "1"
+    imagePullSecrets:
+    - name: rhai-pull-secret

@@ -48,6 +48,19 @@
   .tenant { margin-bottom: 22px; }
   .tenant:last-child { margin-bottom: 4px; }
   .tenant .row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .tenant .tenant-header { cursor: pointer; user-select: none; padding: 4px 0; position: relative; }
+  .tenant .tenant-header:hover { opacity: 0.8; }
+  .tenant .tenant-header::before {
+    content: "▾";
+    position: absolute;
+    left: -18px;
+    color: var(--muted);
+    font-size: 12px;
+    transition: transform 0.2s;
+  }
+  .tenant.collapsed .tenant-header::before { transform: rotate(-90deg); }
+  .tenant .tenant-body { overflow: hidden; transition: max-height 0.2s ease-out; }
+  .tenant.collapsed .tenant-body { display: none; }
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 7px; }
   .name { font-weight: 600; }
   .obj { color: var(--muted); font-size: 11px; }
@@ -91,8 +104,13 @@
 
   /* Stat cards */
   .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 18px; }
-  .card { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-  .card .ttl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 8px; display: flex; align-items: center; }
+  .card { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 0; }
+  .card .ttl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0; display: flex; align-items: center; padding: 12px 14px; cursor: pointer; user-select: none; }
+  .card .ttl:hover { background: var(--panel); }
+  .card .ttl::before { content: "▾"; margin-right: 8px; transition: transform 0.2s; display: inline-block; }
+  .card.collapsed .ttl::before { transform: rotate(-90deg); }
+  .card .card-body { padding: 0 14px 12px 14px; }
+  .card.collapsed .card-body { display: none; }
   .metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 12px; }
   .metrics .m { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
   .metrics .m b { color: var(--muted); font-weight: 500; }
@@ -118,9 +136,66 @@
   .preset:hover { border-color: var(--accent); }
   .preset.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
   .preset .pname { font-weight: 600; margin-bottom: 3px; }
-  .preset .pdesc { color: var(--muted); font-size: 11px; }
-  .scn-tenant { margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .preset .pdesc { color: var(--muted); font-size: 11px; line-height: 1.45; }
+  .preset-section-header h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; font-weight: 700; }
+  .preset-section-header .section-helper { color: var(--muted); font-size: 11px; line-height: 1.4; margin: 0 0 12px; opacity: 0.75; }
+  .scn-tenant { margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); position: relative; transition: opacity 0.2s ease; }
   .scn-tenant:last-child { border-bottom: none; }
+  .scn-tenant.tenant-inactive { opacity: 0.35; }
+  .scn-tenant.tenant-inactive::before {
+    content: "Not used in this test";
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 10px;
+    color: var(--muted);
+    background: var(--panel);
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    opacity: 1;
+  }
+  .scn-tenant.tenant-active { border-left: 3px solid currentColor; padding-left: 9px; }
+
+  /* More tenants collapsible section */
+  .more-tenants {
+    margin-top: 16px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    background: var(--panel2);
+  }
+  .more-tenants summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 600;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .more-tenants summary::-webkit-details-marker { display: none; }
+  .more-tenants summary::before {
+    content: "▸";
+    display: inline-block;
+    transition: transform 0.2s;
+  }
+  .more-tenants[open] summary::before {
+    transform: rotate(90deg);
+  }
+  .more-tenants summary:hover {
+    color: var(--txt);
+  }
+  .more-tenants[open] summary {
+    margin-bottom: 12px;
+  }
+  .more-tenants-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
   .scn-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 7px 0; }
   .scn-row label { color: var(--muted); font-size: 12px; }
   .scn-row input[type=number], .scn-row input[type=text] {
@@ -288,9 +363,8 @@
       <div class="chart-wrap">
         <canvas id="chart" height="340"></canvas>
       </div>
-      <div class="legend">
-        <span><i style="background:var(--premium)"></i>premium-tenant</span>
-        <span><i style="background:var(--standard)"></i>standard-tenant</span>
+      <div class="legend" id="live-legend">
+        <!-- Dynamic legend populated by JavaScript -->
         <span id="y-label" style="margin-left:auto;color:var(--muted)"></span>
       </div>
 
@@ -320,11 +394,9 @@
           <span class="badge" id="scn-mode-badge">Setup</span>
           <span class="mtext" id="scn-mode-text">Build your scenario below, then press Run to start it.</span>
         </div>
-        <h2>Preset scenarios</h2>
+        <h2>Test Scenarios</h2>
         <div class="presets" id="presets"></div>
-        <h2 style="margin-top:18px;">Saved scenarios <span id="saved-empty" style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;">— none yet; build one and press Save</span></h2>
-        <div class="presets" id="saved"></div>
-        <h2 style="margin-top:18px;">Builder</h2>
+        <h2 style="margin-top:18px;">Builder <span id="tenant-count-badge" style="color:var(--muted);font-weight:400;font-size:11px;text-transform:none;letter-spacing:0;"></span></h2>
         <div class="scn-row"><label>Name</label><input type="text" id="scn-name" placeholder="My scenario" /></div>
         <div class="scn-row"><label title="Time span shown in the charts on the right. The traffic plan and the measured latency share this window, so you can line them up in time. Each tenant's own cycle length is set per-tenant below.">Window (s)</label><input type="number" id="scn-window" min="10" max="300" step="5" value="60" /></div>
         <div class="scn-row"><label title="Repeat the curve forever (uncheck to play it once and stop).">Loop continuously</label><input type="checkbox" id="scn-loop" checked /></div>
@@ -335,49 +407,51 @@
         </div>
       </div>
 
-      <!-- RIGHT: traffic plan preview + measured latency -->
+      <!-- RIGHT: Request load and measured latency charts -->
       <div class="panel">
-        <h2>Traffic plan — queries / sec</h2>
-        <div class="chart-wrap"><canvas id="preview" height="200"></canvas></div>
-        <div class="legend">
-          <span><i style="background:var(--premium)"></i>premium-tenant</span>
-          <span><i style="background:var(--standard)"></i>standard-tenant</span>
-          <span style="margin-left:auto;color:var(--muted)">target q/s · now at right</span>
+        <!-- REQUEST LOAD CHART (always visible, shows preview or live QPS) -->
+        <h2>Request load — queries / sec</h2>
+        <div class="chart-wrap"><canvas id="scn-qps-chart" height="240"></canvas></div>
+        <div class="legend" id="scn-qps-legend">
+          <!-- Dynamic legend populated by JavaScript -->
+          <span id="scn-qps-y-label" style="margin-left:auto;color:var(--muted)"></span>
         </div>
 
-        <h2 style="margin-top:20px;">Measured latency</h2>
-        <div class="controls">
-          <div class="metric-seg-wrap" id="scn-metric-seg">
-            <span class="seg-label">TTFT</span>
-            <div class="seg">
-              <button data-metric="med_ttft">Median</button>
-              <button data-metric="p90_ttft">P90</button>
-              <button data-metric="p95_ttft" class="active">P95</button>
-              <button data-metric="max_ttft">Max</button>
+        <!-- LATENCY CHART (shows measured results when running) -->
+        <div id="scn-latency-section">
+          <h2 style="margin-top:24px;">Measured latency</h2>
+          <div class="controls" id="scn-latency-controls" style="display:none;">
+            <div class="metric-seg-wrap" id="scn-metric-seg">
+              <span class="seg-label">TTFT</span>
+              <div class="seg">
+                <button data-metric="med_ttft">Median</button>
+                <button data-metric="p90_ttft">P90</button>
+                <button data-metric="p95_ttft" class="active">P95</button>
+                <button data-metric="max_ttft">Max</button>
+              </div>
+              <span class="seg-label">End-to-end</span>
+              <div class="seg">
+                <button data-metric="med_total">Median</button>
+                <button data-metric="p90_total">P90</button>
+                <button data-metric="p95_total">P95</button>
+                <button data-metric="max_total">Max</button>
+              </div>
             </div>
-            <span class="seg-label">End-to-end</span>
-            <div class="seg">
-              <button data-metric="med_total">Median</button>
-              <button data-metric="p90_total">P90</button>
-              <button data-metric="p95_total">P95</button>
-              <button data-metric="max_total">Max</button>
-            </div>
+            <label title="Trailing window each plotted point is computed over. Each point aggregates (e.g. P95/median/max) every request that finished in the preceding N seconds. Smaller = more responsive but noisier; larger = smoother but slower to react.">Avg window
+              <select id="scn-window-sel">
+                <option value="3">3s</option>
+                <option value="5">5s</option>
+                <option value="10" selected>10s</option>
+                <option value="20">20s</option>
+              </select>
+            </label>
+            <span style="margin-left:auto;color:var(--muted);font-size:11px;">x-axis span set by the <b>Window</b> field at left</span>
           </div>
-          <label title="Trailing window each plotted point is computed over. Each point aggregates (e.g. P95/median/max) every request that finished in the preceding N seconds. Smaller = more responsive but noisier; larger = smoother but slower to react.">Avg window
-            <select id="scn-window-sel">
-              <option value="3">3s</option>
-              <option value="5">5s</option>
-              <option value="10" selected>10s</option>
-              <option value="20">20s</option>
-            </select>
-          </label>
-          <span style="margin-left:auto;color:var(--muted);font-size:11px;">x-axis span set by the <b>Window</b> field at left</span>
-        </div>
-        <div class="chart-wrap"><canvas id="scn-latency" height="240"></canvas></div>
-        <div class="legend">
-          <span><i style="background:var(--premium)"></i>premium-tenant</span>
-          <span><i style="background:var(--standard)"></i>standard-tenant</span>
-          <span id="scn-y-label" style="margin-left:auto;color:var(--muted)"></span>
+          <div class="chart-wrap"><canvas id="scn-chart" height="240"></canvas></div>
+          <div class="legend" id="scn-legend">
+            <!-- Dynamic legend populated by JavaScript -->
+            <span id="scn-y-label" style="margin-left:auto;color:var(--muted)"></span>
+          </div>
         </div>
 
         <div class="cards" id="scn-cards"></div>
@@ -388,8 +462,17 @@
 <script>
 "use strict";
 
-const TENANT_COLORS = { "premium-tenant": getCSS("--premium"), "standard-tenant": getCSS("--standard") };
 function getCSS(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+const TENANT_COLORS = {
+  "premium-tenant-a": "#10b981",  // bright emerald green
+  "premium-tenant-b": "#06b6d4",  // bright cyan
+  "premium-tenant-c": "#a855f7",  // bright purple (distinct from green/cyan)
+  "standard-tenant-a": "#facc15", // bright yellow
+  "standard-tenant-b": "#f97316", // bright orange
+  // Legacy 2-tenant support
+  "premium-tenant": getCSS("--premium"),
+  "standard-tenant": getCSS("--standard"),
+};
 
 let CONFIG = null;
 let mode = "concurrency";   // "concurrency" | "qps"
@@ -648,8 +731,49 @@ async function init() {
   document.getElementById("scn-name").addEventListener("input", () => { activePreset = -1; renderPresets(); });
 
   window.addEventListener("resize", draw);
+  populateLegends();
   draw();
   poll();
+}
+
+// Populate dynamic legends with all configured tenants
+function populateLegends() {
+  if (!CONFIG || !CONFIG.tenants) return;
+  const tenants = [...CONFIG.tenants].sort((a, b) => b.priority - a.priority);
+
+  // Live view legend
+  const liveLegend = document.getElementById("live-legend");
+  const yLabel = document.getElementById("y-label");
+  liveLegend.innerHTML = "";
+  for (const t of tenants) {
+    const color = TENANT_COLORS[t.fairness_id] || getCSS("--accent");
+    const span = document.createElement("span");
+    span.innerHTML = `<i style="background:${color}"></i><span style="color:${color}">${t.fairness_id}</span>`;
+    liveLegend.appendChild(span);
+  }
+  liveLegend.appendChild(yLabel);
+
+  // Scenario chart legend (filters out tenants with zero traffic in current preset)
+  const scnLegend = document.getElementById("scn-legend");
+  const scnYLabel = document.getElementById("scn-y-label");
+  scnLegend.innerHTML = "";
+
+  // Filter to only show tenants that have traffic in the current scenario
+  const activeTenants = tenants.filter(t => {
+    // Check if this tenant has any traffic configured in scnBuilder
+    if (!scnBuilder || !scnBuilder.curves || !scnBuilder.curves[t.fairness_id]) return false;
+    const curve = scnBuilder.curves[t.fairness_id];
+    // Has traffic if base > 0 or has pulses
+    return (curve.base || 0) > 0 || (curve.pulses && curve.pulses.length > 0);
+  });
+
+  for (const t of activeTenants) {
+    const color = TENANT_COLORS[t.fairness_id] || getCSS("--accent");
+    const span = document.createElement("span");
+    span.innerHTML = `<i style="background:${color}"></i><span style="color:${color}">${t.fairness_id}</span>`;
+    scnLegend.appendChild(span);
+  }
+  scnLegend.appendChild(scnYLabel);
 }
 
 // Re-skin the whole control panel for the current `mode`: title, hint, and the
@@ -674,41 +798,71 @@ function setMode(next) {
   }).catch(() => {});
 }
 
+// Track collapsed state (default: only premium-tenant-a expanded)
+if (!window.tenantCollapsed) {
+  window.tenantCollapsed = {};
+}
+
 function buildTenantControls() {
   const m = MODES[mode];
   const max = m.max();
   const root = document.getElementById("tenants");
   root.innerHTML = "";
-  // premium first (higher priority on top, like the CLI dashboard)
+
   const tenants = [...CONFIG.tenants].sort((a, b) => b.priority - a.priority);
+
   for (const t of tenants) {
+    // Initialize collapsed state (default: only premium-tenant-a expanded)
+    if (window.tenantCollapsed[t.fairness_id] === undefined) {
+      window.tenantCollapsed[t.fairness_id] = t.fairness_id !== "premium-tenant-a";
+    }
+
+    const isCollapsed = window.tenantCollapsed[t.fairness_id];
     const cls = t.fairness_id === "premium-tenant" ? "premium" : "standard";
     const cur = values[mode][t.fairness_id] || 0;
     const el = document.createElement("div");
-    el.className = "tenant " + cls;
+    el.className = "tenant " + cls + (isCollapsed ? " collapsed" : "");
     el.innerHTML = `
-      <div class="row">
+      <div class="row tenant-header" onclick="toggleTenantCollapse('${t.fairness_id}')">
         <div><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>
-          <span class="name">${t.fairness_id}</span>
+          <span class="name" style="color:${TENANT_COLORS[t.fairness_id]}">${t.fairness_id}</span>
           <span class="obj">· ${t.objective} · pri ${t.priority}</span>
         </div>
         <span class="val" id="val-${t.fairness_id}">${m.fmt(cur)}</span>
       </div>
-      <input type="range" min="0" max="${max}" step="${m.step}" value="${cur}"
-             id="slider-${t.fairness_id}" />
-      <div class="ticks"><span>0</span><span>${m.fmt(max/2)}</span><span>${m.fmt(max)}</span></div>
+      <div class="tenant-body">
+        <input type="range" min="0" max="${max}" step="${m.step}" value="${cur}"
+               id="slider-${t.fairness_id}" />
+        <div class="ticks"><span>0</span><span>${m.fmt(max/2)}</span><span>${m.fmt(max)}</span></div>
+      </div>
     `;
     root.appendChild(el);
+
     const slider = el.querySelector("input");
     slider.addEventListener("input", () => {
       document.getElementById("val-" + t.fairness_id).textContent = m.fmt(+slider.value);
       setTarget(t.fairness_id, +slider.value, false);
     });
-    // QPS sliders auto-grow: if you drag one to the top and release, the range
-    // rescales (with headroom) so you can keep pushing higher.
     slider.addEventListener("change", () => {
       if (mode === "qps" && +slider.max !== qpsSliderMax()) { buildTenantControls(); draw(); }
     });
+  }
+}
+
+function toggleTenantCollapse(tenantId) {
+  window.tenantCollapsed[tenantId] = !window.tenantCollapsed[tenantId];
+  const isCollapsed = window.tenantCollapsed[tenantId];
+
+  // Update left slider
+  const tenantEl = document.querySelector(`.tenant .tenant-header[onclick*="${tenantId}"]`)?.parentElement;
+  if (tenantEl) {
+    tenantEl.classList.toggle("collapsed", isCollapsed);
+  }
+
+  // Update right metric card
+  const cardEl = document.querySelector(`.card[data-tenant="${tenantId}"]`);
+  if (cardEl) {
+    cardEl.classList.toggle("collapsed", isCollapsed);
   }
 }
 
@@ -819,24 +973,37 @@ function renderCards(data, rootId) {
   const root = document.getElementById(rootId || "cards");
   if (!root) return;
   const qps = data.mode === "qps";
+
+  // Show all tenants, but respect collapsed state
   const tenants = [...data.tenants].sort((a, b) => b.priority - a.priority);
-  root.innerHTML = tenants.map(t => `
-    <div class="card">
-      <div class="ttl"><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>${t.fairness_id}</div>
-      <div class="metrics">
+
+  root.innerHTML = tenants.map(t => {
+    // Initialize collapsed state if needed
+    if (window.tenantCollapsed[t.fairness_id] === undefined) {
+      window.tenantCollapsed[t.fairness_id] = t.fairness_id !== "premium-tenant-a";
+    }
+    const isCollapsed = window.tenantCollapsed[t.fairness_id];
+
+    return `
+    <div class="card${isCollapsed ? ' collapsed' : ''}" data-tenant="${t.fairness_id}">
+      <div class="ttl" onclick="toggleTenantCollapse('${t.fairness_id}')"><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>${t.fairness_id}</div>
+      <div class="card-body">
+        <div class="metrics">
         ${latRows(t)}
         <div class="grp">Throughput</div>
         <div class="m"><b>in-flight</b><span>${qps ? t.active : t.active + " / " + t.target}</span></div>
         <div class="m"><b>QPS</b><span>${qps ? t.qps.toFixed(1) + " / " + t.target_qps.toFixed(1) : t.qps.toFixed(1)}</span></div>
       </div>
-      <div class="codes">
-        <span class="ok">200: ${t.s_200}</span>
-        <span class="warn">429: ${t.s_429}</span>
-        <span class="bad">503: ${t.s_503}</span>
-        <span class="bad">err: ${t.s_err}</span>
+        <div class="codes">
+          <span class="ok">200: ${t.s_200}</span>
+          <span class="warn">429: ${t.s_429}</span>
+          <span class="bad">503: ${t.s_503}</span>
+          <span class="bad">err: ${t.s_err}</span>
+        </div>
+      </div>
       </div>
     </div>
-  `).join("");
+  `}).join("");
 }
 
 // The latency percentiles shared by the moving-average and experiment views.
@@ -862,6 +1029,21 @@ function codeRow(o) {
 
 // Scenarios-view cards: each tenant shows the trailing moving-average window
 // next to the cumulative metrics accumulated since the experiment started.
+function getCurrentPhaseLabel(scnState) {
+  if (!scnState || !scnState.name) return "";
+  // Find the preset that matches this scenario
+  const preset = PRESETS.find(p => p.name === scnState.name);
+  if (!preset || !preset.phases) return "";
+
+  const elapsed = scnState.elapsed || 0;
+  for (const phase of preset.phases) {
+    if (elapsed < phase.until) {
+      return ` — ${phase.label}`;
+    }
+  }
+  return "";
+}
+
 function renderScnCards(data) {
   const root = document.getElementById("scn-cards");
   if (!root) return;
@@ -870,7 +1052,14 @@ function renderScnCards(data) {
   const expHdr = data.experiment && data.experiment.running
     ? `Since experiment start · ${Math.floor(data.experiment.elapsed)}s`
     : (data.experiment && data.experiment.has_result ? "Experiment (final)" : "Since experiment start");
+
+  // Determine which tenants are active in current scenario
+  const currentTestName = scnBuilder.name || "";
+  const activeTenantIds = TEST_TENANT_CONFIGS[currentTestName] || [];
+
   root.innerHTML = tenants.map(t => {
+    const isActive = activeTenantIds.length === 0 || activeTenantIds.includes(t.fairness_id);
+    const collapsedClass = isActive ? "" : " collapsed";
     const e = t.exp;   // cumulative stats for this tenant, or null
     const movInflight = `
       <div class="m"><b>in-flight</b><span>${qps ? t.active : t.active + " / " + t.target}</span></div>
@@ -880,20 +1069,22 @@ function renderScnCards(data) {
       <div class="m"><b>avg QPS</b><span>${e.qps.toFixed(2)}</span></div>` : "";
     return `
       <div class="card">
-        <div class="ttl"><span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>${t.fairness_id}</div>
-        <div class="twocol">
-          <div class="subcard">
-            <div class="col-h">Moving avg · ${smoothing}s window</div>
-            <div class="metrics">${latRows(t)}${movInflight}</div>
-            <div class="codes">${codeRow(t)}</div>
-          </div>
-          <div class="subcard${e ? "" : " muted-col"}">
-            <div class="col-h"><span class="accent">${expHdr}</span></div>
-            ${e
-              ? `<div class="metrics">${latRows(e)}${expExtra}</div><div class="codes">${codeRow(e)}</div>`
-              : `<div class="no-exp">No experiment yet — press <b>Run</b> to accumulate cumulative metrics here.</div>`}
-          </div>
+        <div class="ttl">
+          <span class="dot" style="background:${TENANT_COLORS[t.fairness_id]}"></span>${t.fairness_id}
         </div>
+        <div class="twocol">
+            <div class="subcard">
+              <div class="col-h">Moving avg · ${smoothing}s window</div>
+              <div class="metrics">${latRows(t)}${movInflight}</div>
+              <div class="codes">${codeRow(t)}</div>
+            </div>
+            <div class="subcard${e ? "" : " muted-col"}">
+              <div class="col-h"><span class="accent">${expHdr}</span></div>
+              ${e
+                ? `<div class="metrics">${latRows(e)}${expExtra}</div><div class="codes">${codeRow(e)}</div>`
+                : `<div class="no-exp">No experiment yet — press <b>Run</b> to accumulate cumulative metrics here.</div>`}
+            </div>
+          </div>
       </div>`;
   }).join("");
 }
@@ -1006,10 +1197,36 @@ function downloadBlob(filename, type, text) {
 function draw() {
   if (!CONFIG) return;
   if (activeView === "scenarios") {
-    drawLatency("scn-latency", 240, "scn-y-label", scnWindow);
-    drawPreview("preview");
+    drawScenarioChart();
   } else {
     drawLatency("chart", 340, "y-label", chartSpan);
+  }
+}
+
+// Dual chart for Scenarios view: QPS chart (always) + Latency chart (when running/has data)
+function drawScenarioChart() {
+  const scnState = lastData?.scenario;
+  const isRunning = scnState?.playing;
+  const hasData = Object.values(history).some(h => h.filter(p => p[metric] != null).length > 0);
+
+  // Show/hide entire latency section when running or has data
+  const latencySectionEl = document.getElementById("scn-latency-section");
+  if (latencySectionEl) latencySectionEl.style.display = (isRunning || hasData) ? "" : "none";
+
+  // Show latency controls only when running or has data
+  const controlsEl = document.getElementById("scn-latency-controls");
+  if (controlsEl) controlsEl.style.display = (isRunning || hasData) ? "" : "none";
+
+  // ALWAYS draw QPS chart (preview when stopped, live QPS when running)
+  if (isRunning) {
+    drawLiveQPS("scn-qps-chart", 240, "scn-qps-y-label", scnWindow);
+  } else {
+    drawPreview("scn-qps-chart");
+  }
+
+  // Draw latency chart when running or has data
+  if (isRunning || hasData) {
+    drawLatency("scn-chart", 240, "scn-y-label", scnWindow);
   }
 }
 
@@ -1128,16 +1345,160 @@ function colorClass(fid) {
 function num(v) { v = +v || 0; return Math.round(v * 100) / 100; }
 
 // Presets are defined as fractions of max_qps so they scale with --max-qps.
+// Track which tenants each test uses
+const TEST_TENANT_CONFIGS = {
+  "Test 1: GPU Consolidation": [
+    "premium-tenant-a", "premium-tenant-b"  // Only 2 premium tenants (simulating 2 GPUs → 1 GPU)
+  ],
+  "Test 2: Priority Differentiation": [
+    "premium-tenant-a", "premium-tenant-b", "premium-tenant-c",
+    "standard-tenant-a", "standard-tenant-b"
+  ],
+  "Test 3: Fairness Validation": [
+    "premium-tenant-a", "premium-tenant-b", "premium-tenant-c",
+    "standard-tenant-a", "standard-tenant-b"
+  ],
+  "Test 4: Priority Inversion Prevention": [
+    "premium-tenant-a", "premium-tenant-b", "premium-tenant-c",
+    "standard-tenant-a", "standard-tenant-b"
+  ],
+  "Sinusoidal": ["premium-tenant-a", "standard-tenant-a"],
+  "Spike": ["premium-tenant-a", "standard-tenant-a"],
+};
+
 function buildPresets() {
   const M = CONFIG.max_qps;
+  const CAP = CONFIG.capacity || 16;  // deployment capacity
+
   PRESETS = [
+    {
+      name: "Test 1: GPU Consolidation",
+      desc: "<b>Proves:</b> Fair GPU sharing across tenants. <b>What you'll see:</b> Phase 1 (0-120s): premium-tenant-a baseline P95 TTFT. Phase 2 (120s+): Add premium-tenant-b → P95 stays stable for both.",
+      period: 240, loop: false, window: 240,
+      phases: [
+        { until: 120, label: "Phase 1: premium-tenant-a only (establish baseline)" },
+        { until: 240, label: "Phase 2: Add premium-tenant-b (P95 stays stable)" }
+      ],
+      curves: {
+        // Sinusoidal patterns (6-14 concurrency, 20s period for faster oscillation)
+        // Both tenants use sine waves; actual test stages tenant-b to start at t=120s
+        "premium-tenant-a": { type: "sine", base: 10, amplitude: 4, phase: 0, period: 20 },
+        "premium-tenant-b": { type: "sine", base: 10, amplitude: 4, phase: 0.25, period: 20 },  // Slight phase offset for visibility
+      },
+    },
+    {
+      name: "Test 2: Priority Differentiation",
+      desc: "<b>Proves:</b> Flow control protects premium SLAs during overload. <b>What you'll see:</b> Premium latency stays &lt;2s while standard spikes 2-5s when flooded.",
+      period: 120, loop: false, window: 120,
+      phases: [
+        { until: 30, label: "Baseline" },
+        { until: 90, label: "Standard flood (premium stays fast)" },
+        { until: 120, label: "Return to baseline" }
+      ],
+      curves: {
+        // Premium: 8 conc baseline, ramp to 16, back to 8
+        // Split across 3 premium tenants (distribute roughly equally)
+        "premium-tenant-a": { type: "pulses", base: 2.7, period: 120, pulses: [
+          { at: 0, dur: 60, amp: 0 },           // 0-60s: 2.7 conc
+          { at: 60, dur: 30, amp: 2.6 },        // 60-90s: +2.6 = 5.3 conc
+          { at: 90, dur: 30, amp: 0 }           // 90-120s: back to 2.7
+        ]},
+        "premium-tenant-b": { type: "pulses", base: 2.7, period: 120, pulses: [
+          { at: 0, dur: 60, amp: 0 },
+          { at: 60, dur: 30, amp: 2.6 },
+          { at: 90, dur: 30, amp: 0 }
+        ]},
+        "premium-tenant-c": { type: "pulses", base: 2.6, period: 120, pulses: [
+          { at: 0, dur: 60, amp: 0 },
+          { at: 60, dur: 30, amp: 2.8 },
+          { at: 90, dur: 30, amp: 0 }
+        ]},
+        // Standard: 8 conc baseline, spike to 32 at t=30s, stay high through t=90s
+        // Split across 2 standard tenants
+        "standard-tenant-a": { type: "pulses", base: 4, period: 120, pulses: [
+          { at: 30, dur: 60, amp: 12 }  // 30-90s: 4+12 = 16 conc
+        ]},
+        "standard-tenant-b": { type: "pulses", base: 4, period: 120, pulses: [
+          { at: 30, dur: 60, amp: 12 }
+        ]},
+      },
+    },
+    {
+      name: "Test 3: Fairness Validation",
+      desc: "<b>Proves:</b> Fair queueing prevents tenant monopolization. <b>What you'll see:</b> Similar performance across all tenants within same priority tier despite load imbalance.",
+      period: 90, loop: false, window: 90,
+      phases: [
+        { until: 30, label: "Balanced load (16 premium, 16 standard)" },
+        { until: 60, label: "Premium spike (32 premium, 8 standard)" },
+        { until: 90, label: "Standard spike (8 premium, 32 standard)" }
+      ],
+      curves: {
+        // Phase 1 (0-30s): 16 premium total (5.3 each), 16 standard total (8 each)
+        // Phase 2 (30-60s): 32 premium total (10.7 each), 8 standard total (4 each)
+        // Phase 3 (60-90s): 8 premium total (2.7 each), 32 standard total (16 each)
+        "premium-tenant-a": { type: "pulses", base: 5.3, period: 90, pulses: [
+          { at: 30, dur: 30, amp: 5.4 },   // 30-60s: 10.7 conc
+          { at: 60, dur: 30, amp: -2.6 }   // 60-90s: 2.7 conc
+        ]},
+        "premium-tenant-b": { type: "pulses", base: 5.3, period: 90, pulses: [
+          { at: 30, dur: 30, amp: 5.4 },
+          { at: 60, dur: 30, amp: -2.6 }
+        ]},
+        "premium-tenant-c": { type: "pulses", base: 5.4, period: 90, pulses: [
+          { at: 30, dur: 30, amp: 5.3 },
+          { at: 60, dur: 30, amp: -2.7 }
+        ]},
+        "standard-tenant-a": { type: "pulses", base: 8, period: 90, pulses: [
+          { at: 30, dur: 30, amp: -4 },    // 30-60s: 4 conc
+          { at: 60, dur: 30, amp: 8 }      // 60-90s: 16 conc
+        ]},
+        "standard-tenant-b": { type: "pulses", base: 8, period: 90, pulses: [
+          { at: 30, dur: 30, amp: -4 },
+          { at: 60, dur: 30, amp: 8 }
+        ]},
+      },
+    },
+    {
+      name: "Test 4: Priority Inversion Prevention",
+      desc: "<b>Proves:</b> Batch workloads can't starve interactive traffic. <b>What you'll see:</b> Premium requests bypass standard queue flood, maintaining low latency despite 50 standard requests in queue.",
+      period: 90, loop: false, window: 90,
+      phases: [
+        { until: 30, label: "Standard flood builds (50 requests queued)" },
+        { until: 60, label: "Premium bypass test (5 premium cut the queue)" },
+        { until: 90, label: "Cooldown" }
+      ],
+      curves: {
+        // Phase 1 (0-60s): Flood with 50 standard requests
+        // Phase 2 (30-60s): 5 premium requests arrive and should bypass queue
+        // Phase 3 (60-90s): Cooldown
+        "premium-tenant-a": { type: "pulses", base: 0, period: 90, pulses: [
+          { at: 30, dur: 30, amp: 1.7 },  // 30-60s: 1.7 conc (total 5 across 3 tenants)
+          { at: 60, dur: 30, amp: -1.7 }  // 60-90s: back to 0
+        ]},
+        "premium-tenant-b": { type: "pulses", base: 0, period: 90, pulses: [
+          { at: 30, dur: 30, amp: 1.7 },
+          { at: 60, dur: 30, amp: -1.7 }
+        ]},
+        "premium-tenant-c": { type: "pulses", base: 0, period: 90, pulses: [
+          { at: 30, dur: 30, amp: 1.6 },
+          { at: 60, dur: 30, amp: -1.6 }
+        ]},
+        // Standard: Heavy load from 0-60s, then cooldown
+        "standard-tenant-a": { type: "pulses", base: 25, period: 90, pulses: [
+          { at: 60, dur: 30, amp: -25 }  // 60-90s: cooldown to 0
+        ]},
+        "standard-tenant-b": { type: "pulses", base: 25, period: 90, pulses: [
+          { at: 60, dur: 30, amp: -25 }
+        ]},
+      },
+    },
     {
       name: "Sinusoidal",
       desc: "Both tiers are sine waves; the standard tier is offset by phase. At phase 0.5 they perfectly overlap — the two flows complement each other so total load stays balanced.",
       period: 60, loop: true,
       curves: {
-        "premium-tenant":  { type: "sine", base: 0.5 * M, amplitude: 0.5 * M, phase: 0 },
-        "standard-tenant": { type: "sine", base: 0.5 * M, amplitude: 0.5 * M, phase: 0.5 },
+        "premium-tenant-a":  { type: "sine", base: 0.5 * M, amplitude: 0.5 * M, phase: 0 },
+        "standard-tenant-a": { type: "sine", base: 0.5 * M, amplitude: 0.5 * M, phase: 0.5 },
       },
     },
     {
@@ -1145,8 +1506,8 @@ function buildPresets() {
       desc: "Premium is constant; standard spikes suddenly each period.",
       period: 30, loop: true,
       curves: {
-        "premium-tenant":  { type: "constant", base: 0.5 * M },
-        "standard-tenant": { type: "spike", base: 0.1 * M, amplitude: 0.9 * M, pos: 0.5, width: 0.08 },
+        "premium-tenant-a":  { type: "constant", base: 0.5 * M },
+        "standard-tenant-a": { type: "spike", base: 0.1 * M, amplitude: 0.9 * M, pos: 0.5, width: 0.08 },
       },
     },
   ];
@@ -1155,11 +1516,34 @@ function buildPresets() {
 function renderPresets() {
   const root = document.getElementById("presets");
   root.innerHTML = "";
-  PRESETS.forEach((p, i) => {
+
+  // Tests Section (indices 0-3)
+  const testsHeader = document.createElement("div");
+  testsHeader.className = "preset-section-header";
+  testsHeader.innerHTML = `<h3>🎯 Tests</h3><p class="section-helper">Demonstrate flow control value propositions with measurable outcomes</p>`;
+  root.appendChild(testsHeader);
+
+  PRESETS.slice(0, 4).forEach((p, i) => {
     const b = document.createElement("button");
     b.className = "preset" + (i === activePreset ? " active" : "");
     b.innerHTML = `<div class="pname">${p.name}</div><div class="pdesc">${p.desc}</div>`;
     b.addEventListener("click", () => loadPreset(i));
+    root.appendChild(b);
+  });
+
+  // Demos Section (indices 4-5)
+  const demoHeader = document.createElement("div");
+  demoHeader.className = "preset-section-header";
+  demoHeader.style.marginTop = "24px";
+  demoHeader.innerHTML = `<h3>🎨 Demos</h3><p class="section-helper">Explore traffic patterns and build custom scenarios</p>`;
+  root.appendChild(demoHeader);
+
+  PRESETS.slice(4).forEach((p, i) => {
+    const actualIndex = i + 4;
+    const b = document.createElement("button");
+    b.className = "preset" + (actualIndex === activePreset ? " active" : "");
+    b.innerHTML = `<div class="pname">${p.name}</div><div class="pdesc">${p.desc}</div>`;
+    b.addEventListener("click", () => loadPreset(actualIndex));
     root.appendChild(b);
   });
 }
@@ -1169,6 +1553,9 @@ function loadPreset(i) {
   activePreset = i;
   loadScenarioInto(p);
   renderPresets();
+
+  // Update visual states to show which tenants this test uses
+  updateTenantVisualStates(p.name);
 }
 
 // Shared loader: copy a {name, period, loop, curves, window?} record into the
@@ -1312,16 +1699,75 @@ function pulseRowsHTML(fid, c, mq) {
     </div>`).join("");
 }
 
+// Update visual states based on which tenants are used in current test
+function updateTenantVisualStates(testName) {
+  const activeTenants = TEST_TENANT_CONFIGS[testName] || [];
+  const tenantElems = document.querySelectorAll('.scn-tenant');
+  let activeCount = 0;
+  let totalCount = 0;
+
+  tenantElems.forEach(el => {
+    totalCount++;
+    const tenantName = el.dataset.tenant;
+    if (!tenantName) return;
+
+    if (activeTenants.length === 0 || activeTenants.includes(tenantName)) {
+      // Active tenant - highlight it
+      el.classList.remove('tenant-inactive');
+      el.classList.add('tenant-active');
+      activeCount++;
+    } else {
+      // Inactive tenant - dim it
+      el.classList.remove('tenant-active');
+      el.classList.add('tenant-inactive');
+    }
+  });
+
+  // Update badge showing active tenant count
+  const badge = document.getElementById('tenant-count-badge');
+  if (badge && activeTenants.length > 0) {
+    const inactiveCount = totalCount - activeCount;
+    if (inactiveCount > 0) {
+      badge.textContent = `— ${activeCount} active, ${inactiveCount} dimmed`;
+    } else {
+      badge.textContent = `— ${activeCount} tenants`;
+    }
+  } else if (badge) {
+    badge.textContent = '';
+  }
+}
+
 function buildScnEditors() {
   const root = document.getElementById("scn-editors");
   root.innerHTML = "";
+
+  // Determine which tenants are active for current scenario
+  const currentTestName = scnBuilder.name || "";
+  const activeTenantIds = TEST_TENANT_CONFIGS[currentTestName] || [];
+
   const tenants = [...CONFIG.tenants].sort((a, b) => b.priority - a.priority);
-  for (const t of tenants) {
+
+  // Separate active and inactive tenants
+  const activeTenants = [];
+  const inactiveTenants = [];
+
+  tenants.forEach(t => {
+    if (activeTenantIds.length === 0 || activeTenantIds.includes(t.fairness_id)) {
+      activeTenants.push(t);
+    } else {
+      inactiveTenants.push(t);
+    }
+  });
+
+  // Build active tenant editors
+  for (const t of activeTenants) {
     const fid = t.fairness_id;
     const c = scnBuilder.curves[fid] || (scnBuilder.curves[fid] = { type: "constant", base: 0.5 * CONFIG.max_qps, amplitude: 0.3 * CONFIG.max_qps, period: scnBuilder.period || 60 });
     const color = TENANT_COLORS[fid] || getCSS("--accent");
     const el = document.createElement("div");
-    el.className = "scn-tenant";
+    el.className = "scn-tenant tenant-active";
+    el.dataset.tenant = fid;
+    el.style.color = color;
     const mq = CONFIG.max_qps;
     const gd = genDefaults(c);
     el.innerHTML = `
@@ -1408,6 +1854,108 @@ function buildScnEditors() {
       });
     });
   }
+
+  // Add collapsible section for inactive tenants
+  if (inactiveTenants.length > 0) {
+    const moreSection = document.createElement("details");
+    moreSection.className = "more-tenants";
+    const summary = document.createElement("summary");
+    summary.textContent = `More tenants (${inactiveTenants.length})`;
+    moreSection.appendChild(summary);
+
+    const list = document.createElement("div");
+    list.className = "more-tenants-list";
+
+    for (const t of inactiveTenants) {
+      const fid = t.fairness_id;
+      const c = scnBuilder.curves[fid] || (scnBuilder.curves[fid] = { type: "constant", base: 0.5 * CONFIG.max_qps, amplitude: 0.3 * CONFIG.max_qps, period: scnBuilder.period || 60 });
+      const color = TENANT_COLORS[fid] || getCSS("--accent");
+      const el = document.createElement("div");
+      el.className = "scn-tenant tenant-inactive";
+      el.dataset.tenant = fid;
+      el.style.color = color;
+
+      const mq = CONFIG.max_qps;
+      const gd = genDefaults(c);
+      el.innerHTML = `
+        <div class="scn-row"><div><span class="dot" style="background:${color}"></span><span class="name ${colorClass(fid)}">${fid}</span></div></div>
+        <div class="scn-row"><label title="Length of this tenant's cycle. Its curve repeats every period (independent of the other tenants).">Period (s)</label><input type="number" min="2" max="3600" step="1" data-fid="${fid}" data-k="period" value="${num(c.period || scnBuilder.period)}" /></div>
+        <div class="scn-row"><label>Curve</label>
+          <select data-fid="${fid}" data-k="type">${CURVE_TYPES.map(ct => `<option value="${ct.v}" ${c.type === ct.v ? "selected" : ""}>${ct.label}</option>`).join("")}</select></div>
+        <div class="scn-row" data-show="base"><label>Base q/s</label><input type="number" min="0" step="0.1" data-fid="${fid}" data-k="base" value="${num(c.base)}" /></div>
+        <div class="scn-row" data-show="amplitude"><label>Amplitude q/s</label><input type="number" min="0" step="0.1" data-fid="${fid}" data-k="amplitude" value="${num(c.amplitude)}" /></div>
+        <div class="scn-row" data-show="phase"><label title="Shift the wave along the period (0–1). 0.5 = perfect overlap with the other tier.">Phase · 0.5 = overlap</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="phase" value="${num(c.phase || 0)}" /></div>
+        <div class="scn-row" data-show="pos"><label title="Where in the period the spike happens (0–1).">Spike at</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="pos" value="${num(c.pos == null ? 0.5 : c.pos)}" /></div>
+        <div class="scn-row" data-show="width"><label title="Spike width as a fraction of the period.">Spike width</label><input type="number" min="0.01" max="1" step="0.01" data-fid="${fid}" data-k="width" value="${num(c.width == null ? 0.08 : c.width)}" /></div>
+        <div class="scn-row" data-show="duty"><label title="Fraction of the period that is 'on' (high).">Duty</label><input type="number" min="0.05" max="0.95" step="0.05" data-fid="${fid}" data-k="duty" value="${num(c.duty == null ? 0.5 : c.duty)}" /></div>
+        <div class="scn-row" data-show="spikes" style="margin-top:10px;"><label title="Superimpose this many random pulses per period on top of the shape above. 0 = none.">Random spikes (#)</label><input type="number" min="0" max="50" step="1" data-fid="${fid}" data-k="spikes" value="${c.spikes | 0}" /></div>
+        <div class="scn-row" data-show="spike_amp"><label title="Height of each random spike, in q/s.">↳ spike q/s</label><input type="number" min="0" step="0.1" data-fid="${fid}" data-k="spike_amp" value="${num(c.spike_amp == null ? 0.5 * mq : c.spike_amp)}" /></div>
+        <div class="scn-row" data-show="spike_width"><label title="Width of each random spike as a fraction of the period.">↳ spike width</label><input type="number" min="0.01" max="0.5" step="0.01" data-fid="${fid}" data-k="spike_width" value="${num(c.spike_width == null ? 0.04 : c.spike_width)}" /></div>
+        <div class="scn-row" data-show="jitter"><label title="Random noise band: multiplies the rate by 1±jitter, varying second to second. 0 = smooth.">Jitter (0–1)</label><input type="number" min="0" max="1" step="0.05" data-fid="${fid}" data-k="jitter" value="${num(c.jitter || 0)}" /></div>
+        <div class="scn-row" data-show="seed"><label title="Seed for the random spikes & jitter. Same seed → same 'random' arrangement every replay. Change it to reshuffle.">Random seed</label><input type="number" min="0" max="99999" step="1" data-fid="${fid}" data-k="seed" value="${c.seed == null ? 1 : (c.seed | 0)}" /></div>
+        <div class="scn-row scn-pulses" data-show="pulses">
+          <label title="Script N independent rectangular spikes over the period. Each has its own start time, duration (both in seconds) and height (q/s). Spikes stack on top of Base q/s.">Spike timeline</label>
+          <div class="pulse-list" data-fid="${fid}">${pulseRowsHTML(fid, c, mq)}</div>
+          <div class="pulse-tools">
+            <button type="button" data-act="pulse-add" data-fid="${fid}">+ Add spike</button>
+            <span class="pulse-gen" title="Default shape for evenly-generated spikes: start offset (at), duration (for) and height (q/s). Spacing is the period ÷ N.">N <input type="number" class="pulse-n" min="1" max="50" step="1" value="${(c.pulses && c.pulses.length) || 5}" data-fid="${fid}" />
+              · at <input type="number" class="pulse-gen-at" min="0" step="0.5" value="${num(gd.at)}" data-fid="${fid}" data-gk="at" /><span class="u">s</span>
+              for <input type="number" class="pulse-gen-dur" min="0.1" step="0.5" value="${num(gd.dur)}" data-fid="${fid}" data-gk="dur" /><span class="u">s</span>
+              <input type="number" class="pulse-gen-amp" min="0" step="0.1" value="${num(gd.amp)}" data-fid="${fid}" data-gk="amp" /><span class="u">q/s</span>
+              <button type="button" data-act="pulse-gen" data-fid="${fid}">Generate evenly</button></span>
+          </div>
+        </div>
+      `;
+      list.appendChild(el);
+      applyFieldVisibility(el, c.type);
+
+      // Wire up event listeners for inactive tenant editors too
+      el.querySelectorAll("[data-k]").forEach(inp => {
+        inp.addEventListener("input", () => {
+          const k = inp.dataset.k, f = inp.dataset.fid, cur = scnBuilder.curves[f];
+          cur[k] = (k === "type") ? inp.value : (inp.value === "" ? 0 : +inp.value);
+          if (k === "type") {
+            if (inp.value === "pulses" && (!cur.pulses || !cur.pulses.length)) cur.pulses = genEvenPulses(cur, 3);
+            activePreset = -1; renderPresets();
+            buildScnEditors();
+            drawPreview("preview");
+            return;
+          }
+          activePreset = -1; renderPresets();
+          drawPreview("preview");
+        });
+      });
+
+      el.querySelectorAll(".pulse-row [data-pk]").forEach(inp => {
+        inp.addEventListener("input", () => {
+          const row = inp.closest(".pulse-row"), cur = scnBuilder.curves[row.dataset.fid];
+          if (!cur.pulses || !cur.pulses[+row.dataset.i]) return;
+          const pk = inp.dataset.pk;
+          cur.pulses[+row.dataset.i][pk] = inp.value === "" ? 0 : +inp.value;
+          activePreset = -1; renderPresets();
+          drawPreview("preview");
+        });
+      });
+
+      el.querySelectorAll("[data-act]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const act = btn.dataset.act, cur = scnBuilder.curves[btn.dataset.fid];
+          if (act === "pulse-add") cur.pulses = [...(cur.pulses || []), defaultPulse(cur)];
+          else if (act === "pulse-del") cur.pulses.splice(+btn.dataset.i, 1);
+          else if (act === "pulse-gen") {
+            const n = Math.max(1, Math.min(50, (+el.querySelector(`.pulse-n[data-fid="${btn.dataset.fid}"]`).value) || 5));
+            cur.pulses = genEvenPulses(cur, n, cur.gen);
+          } else return;
+          activePreset = -1; renderPresets();
+          buildScnEditors();
+          drawPreview("preview");
+        });
+      });
+    }
+
+    moreSection.appendChild(list);
+    root.appendChild(moreSection);
+  }
 }
 
 // Lock every setup control while a scenario is running, so the running config
@@ -1444,7 +1992,7 @@ function updateScnStatus() {
     banner.classList.toggle("setup", !playing && !paused);
     document.getElementById("scn-mode-badge").textContent = playing ? "Running" : paused ? "Paused" : "Setup";
     document.getElementById("scn-mode-text").textContent = playing
-      ? `Running "${scnState.name || "scenario"}" · ${Math.floor(scnState.elapsed)}s${scnState.loop ? " · looping" : ""}. Editing is locked — press Pause to freeze, or Reset to return to setup.`
+      ? `Running "${scnState.name || "scenario"}" · ${Math.floor(scnState.elapsed)}s${scnState.loop ? " · looping" : ""}${getCurrentPhaseLabel(scnState)}`
       : paused
       ? `Paused "${scnState.name || "scenario"}" — review the experiment results above. Press Run for a fresh experiment, or Reset to edit.`
       : "Build your scenario below, then press Run to start it.";
@@ -1597,16 +2145,111 @@ function drawPreview(canvasId) {
     }
   } else {
     const xOf = f => padL + W * f;   // oldest (left) -> now (right)
+    // Only draw tenants that are active for this test
+    const activeTenants = TEST_TENANT_CONFIGS[scnBuilder.name] || Object.keys(scnBuilder.curves);
+    const isGPUConsolidation = scnBuilder.name === "Test 1: GPU Consolidation";
+
     for (const fid in scnBuilder.curves) {
+      if (!activeTenants.includes(fid)) continue;  // Skip inactive tenants
+
+      // For GPU Consolidation: tenant-b only appears in Phase 2 (right half, after 120s)
+      const isTenantB = fid === "premium-tenant-b";
+      const startFraction = (isGPUConsolidation && isTenantB) ? 0.5 : 0;  // Start at 50% (120s/240s) for tenant-b
+
       ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
       ctx.beginPath();
+      let firstPoint = true;
       for (let i = 0; i <= N; i++) {
-        const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], i / N)), x = xOf(i / N), y = yOf(Math.min(v, yMax));
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        const frac = i / N;
+        if (frac < startFraction) continue;  // Skip points before start time
+        const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], frac)), x = xOf(frac), y = yOf(Math.min(v, yMax));
+        firstPoint ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        firstPoint = false;
       }
       ctx.stroke();
     }
+
+    // Add phase labels for Test 1 GPU Consolidation
+    if (scnBuilder.name === "Test 1: GPU Consolidation") {
+      ctx.font = "11px monospace";
+      ctx.fillStyle = getCSS("--muted");
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+
+      // Phase 1: Tenant A only (0-120s, left half)
+      const phase1X = padL + W * 0.25;  // 25% across (middle of phase 1)
+      ctx.fillText("Phase 1: Tenant A only", phase1X, padT + 4);
+
+      // Phase 2: Both tenants (120-240s, right half)
+      const phase2X = padL + W * 0.75;  // 75% across (middle of phase 2)
+      ctx.fillText("Phase 2: A + B together", phase2X, padT + 4);
+    }
   }
+}
+
+function drawLiveQPS(canvasId, cssH, yLabelId, span) {
+  // Draw live QPS/concurrency chart (similar to drawPreview but with live data)
+  span = span || scnWindow;
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !CONFIG) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || canvas.parentElement.clientWidth;
+  canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const padL = 44, padR = 12, padT = 12, padB = 22;
+  const W = cssW - padL - padR, H = cssH - padT - padB;
+  const now = Date.now(), tMin = now - span * 1000;
+
+  // Find max QPS (only from active tenants)
+  const activeTenants = TEST_TENANT_CONFIGS[scnBuilder.name] || Object.keys(scnBuilder.curves);
+  let yMax = 0;
+  for (const fid of activeTenants) {
+    for (const p of (history[fid] || [])) {
+      if (p.t >= tMin && p.target_qps != null && p.target_qps > yMax) yMax = p.target_qps;
+    }
+  }
+  yMax = niceCeil(Math.max(yMax, 0.1));
+
+  // Grid lines
+  ctx.strokeStyle = getCSS("--line"); ctx.fillStyle = getCSS("--muted");
+  ctx.lineWidth = 1; ctx.font = "11px monospace"; ctx.textBaseline = "middle";
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + H * (i / 4), val = yMax * (1 - i / 4);
+    ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + W, y); ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.textAlign = "right"; ctx.fillText(val.toFixed(val < 10 ? 1 : 0), padL - 8, y);
+  }
+
+  // X-axis labels
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  const step = spanStep(span);
+  for (let s = 0; s <= span; s += step) {
+    const x = padL + W * (1 - s / span);
+    ctx.fillText("-" + s + "s", x, padT + H + 6);
+  }
+
+  // Draw QPS lines (only for active tenants with data)
+  const yOf = v => padT + H * (1 - v / yMax);
+  const xOf = t => padL + W * ((t - tMin) / (span * 1000));
+
+  for (const fid of activeTenants) {
+    const pts = (history[fid] || []).filter(p => p.t >= tMin && p.target_qps != null && p.target_qps > 0);
+    if (!pts.length) continue;  // Skip if no data or all zeros
+    ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent");
+    ctx.lineWidth = 2; ctx.lineJoin = "round";
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = xOf(p.t), y = yOf(Math.min(p.target_qps, yMax));
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // Y-axis label
+  const yLabel = document.getElementById(yLabelId);
+  if (yLabel) yLabel.textContent = "queries / sec";
 }
 
 function niceCeil(v) {
