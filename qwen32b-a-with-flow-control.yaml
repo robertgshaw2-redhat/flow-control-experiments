@@ -1,0 +1,95 @@
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceService
+metadata:
+  annotations:
+    serving.kserve.io/enable-prefix-cache: "true"
+  labels:
+    test: gpu-consolidation
+  name: qwen32b-a
+  namespace: llm-test
+spec:
+  baseRefs:
+  - name: v3-4-0-kserve-config-llm-template-nvidia-cuda
+  model:
+    name: Qwen/Qwen2.5-0.5B-Instruct
+    uri: hf://Qwen/Qwen2.5-0.5B-Instruct
+  replicas: 1
+  router:
+    gateway: {}
+    route: {}
+    scheduler:
+      config:
+        inline:
+          apiVersion: inference.networking.x-k8s.io/v1alpha1
+          featureGates:
+          - flowControl
+          flowControl:
+            defaultRequestTTL: 60s
+            maxBytes: 10737418240
+            maxRequests: 1000
+            priorityBands:
+            # Premium tier - priority 100
+            - fairnessPolicyRef: round-robin-fairness-policy
+              maxBytes: 5368709120
+              maxRequests: 500
+              orderingPolicyRef: fcfs-ordering-policy
+              priority: 100
+            # Standard tier - priority 0
+            - fairnessPolicyRef: round-robin-fairness-policy
+              maxBytes: 3221225472
+              maxRequests: 300
+              orderingPolicyRef: fcfs-ordering-policy
+              priority: 0
+            # Overflow/best-effort tier - priority -10
+            - fairnessPolicyRef: round-robin-fairness-policy
+              maxBytes: 1073741824
+              maxRequests: 100
+              orderingPolicyRef: fcfs-ordering-policy
+              priority: -10
+          kind: EndpointPickerConfig
+          plugins:
+          - type: queue-scorer
+          - type: prefix-cache-scorer
+          - type: max-score-picker
+          - type: round-robin-fairness-policy
+          - type: fcfs-ordering-policy
+          - parameters:
+              kvCacheUtilThreshold: 0.8
+              metricsStalenessThreshold: 150ms
+              queueDepthThreshold: 2
+            type: utilization-detector
+          - parameters:
+              maxConcurrency: 3
+            type: concurrency-detector
+          saturationDetector:
+            pluginRef: utilization-detector
+          schedulingProfiles:
+          - name: default
+            plugins:
+            - pluginRef: queue-scorer
+              weight: 2
+            - pluginRef: prefix-cache-scorer
+              weight: 3
+            - pluginRef: max-score-picker
+      template:
+        containers:
+        - image: ghcr.io/llm-d/llm-d-inference-scheduler:v0.8.0
+          name: main
+        - name: tokenizer
+        imagePullSecrets:
+        - name: redhat-registry-pull-secret
+  template:
+    containers:
+    - name: main
+    imagePullSecrets:
+    - name: redhat-registry-pull-secret
+    nodeSelector:
+      kubernetes.io/hostname: ip-10-12-2-246.us-west-2.compute.internal
+    tolerations:
+    - effect: NoSchedule
+      key: nvidia.com/gpu
+      operator: Equal
+      value: "true"
+    - effect: NoSchedule
+      key: node.kubernetes.io/disk-pressure
+      operator: Exists

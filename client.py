@@ -233,10 +233,10 @@ class LoadGenerator:
             "ignore_eos": True,
         }
 
-        # Apply the FlowKey. Objective maps to the InferenceObjective CRD name.
+        # Apply the FlowKey headers (matching SharedRequestGenerator - Test 1 proven working)
         headers = {
-            "x-gateway-inference-fairness-id": tenant.fairness_id,
-            "x-gateway-inference-objective": tenant.inference_objective,
+            "x-fairness-id": tenant.fairness_id,
+            "x-inference-priority": str(tenant.priority),
         }
 
         start_time = time.monotonic()

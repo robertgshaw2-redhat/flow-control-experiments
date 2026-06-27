@@ -941,12 +941,12 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         session: aiohttp.ClientSession = app["session"]
         endpoint = app["args"].url
 
-        # Premium tenant: noisy sine 12-18
+        # Premium tenant: noisy sine 20-30 (higher baseline for visibility)
         gen_premium = SharedRequestGenerator(
             fairness_id="premium-tenant-a",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=15,
+            base_concurrency=25,
             metrics=metrics,
             session=session,
             traffic_pattern="noisy_sinusoidal",
@@ -956,12 +956,12 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             phase_offset=0.0
         )
 
-        # Standard tenant: heavy spike pattern 10 → 60 (externally driven by scenario curve)
+        # Standard tenant: massive spike pattern 15 → 200 (externally driven by scenario curve)
         gen_standard = SharedRequestGenerator(
             fairness_id="standard-tenant-a",
             endpoint=endpoint,
             priority=50,
-            base_concurrency=10,  # Base, will be overridden by external_rate
+            base_concurrency=15,  # Base, will be overridden by external_rate
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",
@@ -989,13 +989,12 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         app["shared_generators"] = [gen_premium, gen_standard]
 
         curves = {
-            "premium-tenant-a": {"type": "sine", "base": 15, "amplitude": 3, "phase": 0, "period": 20},
-            "standard-tenant-a": {"type": "pulses", "base": 10, "period": 120, "pulses": [
-                {"at": 0, "dur": 30, "amp": 10},
-                {"at": 30, "dur": 30, "amp": 40},
-                {"at": 60, "dur": 15, "amp": 50},
-                {"at": 75, "dur": 30, "amp": 25},
-                {"at": 105, "dur": 15, "amp": 0}
+            "premium-tenant-a": {"type": "sine", "base": 25, "amplitude": 5, "phase": 0, "period": 20},
+            "standard-tenant-a": {"type": "pulses", "base": 15, "period": 120, "pulses": [
+                {"at": 0, "dur": 15, "amp": 35},    # 0-15s: ramp to 50
+                {"at": 15, "dur": 10, "amp": 150},  # 15-25s: spike to 200
+                {"at": 25, "dur": 75, "amp": 185},  # 25-100s: sustained at 200
+                {"at": 100, "dur": 20, "amp": 0}    # 100-120s: taper to 15
             ]},
         }
         # Force QPS mode for proper saturation detection with SharedRequestGenerator
@@ -1021,23 +1020,23 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         session: aiohttp.ClientSession = app["session"]
         endpoint = app["args"].url
 
-        # All three tenants use noisy sinusoidal patterns with phase offsets
-        # Tenant A: base 12, noisy sine
+        # Three tenants with vertically separated baselines for clarity
+        # Tenant A: HIGH baseline (15), will spike to 30 at 90s (externally driven)
         gen_a = SharedRequestGenerator(
             fairness_id="premium-tenant-a",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=12,
+            base_concurrency=15,
             metrics=metrics,
             session=session,
-            traffic_pattern="noisy_sinusoidal",
+            traffic_pattern="concurrent",
             model_name="Qwen/Qwen2.5-0.5B-Instruct",
             input_tokens=100,
             output_tokens=100,
             phase_offset=0.0
         )
 
-        # Tenant B: base 10, phase offset 0.35
+        # Tenant B: MIDDLE baseline (10), noisy sine
         gen_b = SharedRequestGenerator(
             fairness_id="premium-tenant-b",
             endpoint=endpoint,
@@ -1049,22 +1048,22 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             model_name="Qwen/Qwen2.5-0.5B-Instruct",
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.35
+            phase_offset=0.0
         )
 
-        # Tenant C: base 10, phase offset 0.7 (server will stage start at 30s)
+        # Tenant C: LOW baseline (5), noisy sine, delayed start at 30s
         gen_c = SharedRequestGenerator(
             fairness_id="premium-tenant-c",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=10,
+            base_concurrency=5,
             metrics=metrics,
             session=session,
             traffic_pattern="noisy_sinusoidal",
             model_name="Qwen/Qwen2.5-0.5B-Instruct",
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.7
+            phase_offset=0.5
         )
 
         control["test3_gen_a"] = gen_a
@@ -1094,11 +1093,13 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         asyncio.create_task(auto_stop_test3())
         app["shared_generators"] = [gen_a, gen_b, gen_c]
 
-        # Update curves to match UI sine patterns with jitter/spikes
+        # Update curves to match UI - vertically separated for visibility
         curves = {
-            "premium-tenant-a": {"type": "sine", "base": 12, "amplitude": 4, "phase": 0, "period": 20, "jitter": 0.2, "spikes": 2, "spike_amp": 6, "seed": 101},
-            "premium-tenant-b": {"type": "sine", "base": 10, "amplitude": 4, "phase": 0.35, "period": 20, "jitter": 0.2, "spikes": 2, "spike_amp": 5, "seed": 202},
-            "premium-tenant-c": {"type": "sine", "base": 10, "amplitude": 3, "phase": 0.7, "period": 20, "jitter": 0.2, "spikes": 1, "spike_amp": 4, "seed": 303},
+            "premium-tenant-a": {"type": "pulses", "base": 15, "period": 150, "pulses": [
+                {"at": 90, "dur": 60, "amp": 15}  # 90-150s: spike from 15 to 30
+            ]},
+            "premium-tenant-b": {"type": "sine", "base": 10, "amplitude": 2, "phase": 0, "period": 20, "jitter": 0.15, "seed": 202},
+            "premium-tenant-c": {"type": "sine", "base": 5, "amplitude": 2, "phase": 0.5, "period": 20, "jitter": 0.15, "seed": 303},
         }
         control["mode"] = "qps"
         control["scenario"].update(

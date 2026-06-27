@@ -1519,19 +1519,19 @@ function buildPresets() {
         { until: 120, label: "Return to baseline" }
       ],
       curves: {
-        // Premium: noisy sine wave around 15 (realistic variability, higher baseline)
-        "premium-tenant-a": { type: "sine", base: 15, amplitude: 3, phase: 0, period: 20 },
+        // Premium: noisy sine wave around 25 (higher baseline for visibility)
+        "premium-tenant-a": { type: "sine", base: 25, amplitude: 5, phase: 0, period: 20 },
 
-        // Standard: gradual ramp up to heavy sustained flood, then taper off
-        // 0-15s: ramp from 10 → 30
-        // 15-25s: spike from 30 → 120
-        // 25-100s: sustained high load at 120 (75 seconds at peak)
-        // 100-120s: taper down from 120 → 10
-        "standard-tenant-a": { type: "pulses", base: 10, period: 120, pulses: [
-          { at: 0, dur: 15, amp: 20 },    // 0-15s: ramp to 30
-          { at: 15, dur: 10, amp: 90 },   // 15-25s: spike to 120
-          { at: 25, dur: 75, amp: 110 },  // 25-100s: sustained at 120 (75s plateau)
-          { at: 100, dur: 20, amp: 0 }    // 100-120s: taper to 10
+        // Standard: gradual ramp up to massive sustained flood, then taper off
+        // 0-15s: ramp from 15 → 50
+        // 15-25s: spike from 50 → 200
+        // 25-100s: sustained high load at 200 (75 seconds at peak)
+        // 100-120s: taper down from 200 → 15
+        "standard-tenant-a": { type: "pulses", base: 15, period: 120, pulses: [
+          { at: 0, dur: 15, amp: 35 },    // 0-15s: ramp to 50
+          { at: 15, dur: 10, amp: 150 },  // 15-25s: spike to 200
+          { at: 25, dur: 75, amp: 185 },  // 25-100s: sustained at 200 (75s plateau)
+          { at: 100, dur: 20, amp: 0 }    // 100-120s: taper to 15
         ]},
       },
     },
@@ -1545,15 +1545,17 @@ function buildPresets() {
         { until: 150, label: "Tenant-a spikes (fairness maintained despite imbalance)" }
       ],
       curves: {
-        // All three tenants use noisy sinusoidal patterns with phase offsets for visibility
-        // Tenant-a: starts immediately, base load with spike at 90s
-        "premium-tenant-a": { type: "sine", base: 12, amplitude: 4, phase: 0, period: 20, jitter: 0.2, spikes: 2, spike_amp: 6, seed: 101 },
+        // All three tenants use noisy sinusoidal patterns - separated vertically for clarity
+        // Tenant-a: HIGH baseline, spikes even higher at 90s (15 → 30)
+        "premium-tenant-a": { type: "pulses", base: 15, period: 150, pulses: [
+          { at: 90, dur: 60, amp: 15 }  // 90-150s: spike from 15 to 30
+        ]},
 
-        // Tenant-b: starts immediately, slightly different pattern
-        "premium-tenant-b": { type: "sine", base: 10, amplitude: 4, phase: 0.35, period: 20, jitter: 0.2, spikes: 2, spike_amp: 5, seed: 202 },
+        // Tenant-b: MIDDLE baseline, constant throughout (10)
+        "premium-tenant-b": { type: "sine", base: 10, amplitude: 2, phase: 0, period: 20, jitter: 0.15, seed: 202 },
 
-        // Tenant-c: lower base, delayed start (server will stage this to start at 30s)
-        "premium-tenant-c": { type: "sine", base: 10, amplitude: 3, phase: 0.7, period: 20, jitter: 0.2, spikes: 1, spike_amp: 4, seed: 303 },
+        // Tenant-c: LOW baseline, delayed start at 30s (5)
+        "premium-tenant-c": { type: "sine", base: 5, amplitude: 2, phase: 0.5, period: 20, jitter: 0.15, seed: 303 },
       },
     },
     {

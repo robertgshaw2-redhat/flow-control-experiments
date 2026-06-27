@@ -1,0 +1,116 @@
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceService
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"serving.kserve.io/v1alpha2","kind":"LLMInferenceService","metadata":{"annotations":{"serving.kserve.io/enable-prefix-cache":"true"},"labels":{"test":"gpu-consolidation"},"name":"qwen32b-a","namespace":"llm-test"},"spec":{"baseRefs":[{"name":"v3-4-0-kserve-config-llm-template-nvidia-cuda"}],"model":{"name":"Qwen/Qwen2.5-0.5B-Instruct","uri":"hf://Qwen/Qwen2.5-0.5B-Instruct"},"replicas":1,"router":{"gateway":{},"route":{},"scheduler":{"config":{"inline":{"apiVersion":"inference.networking.x-k8s.io/v1alpha1","kind":"EndpointPickerConfig","plugins":[{"type":"queue-scorer"},{"type":"prefix-cache-scorer"},{"type":"max-score-picker"}],"schedulingProfiles":[{"name":"default","plugins":[{"pluginRef":"queue-scorer","weight":2},{"pluginRef":"prefix-cache-scorer","weight":3},{"pluginRef":"max-score-picker"}]}]}},"template":{"containers":[{"image":"ghcr.io/llm-d/llm-d-inference-scheduler:v0.8.0","name":"main"},{"name":"tokenizer"}],"imagePullSecrets":[{"name":"redhat-registry-pull-secret"}]}}},"template":{"containers":[{"name":"main"}],"imagePullSecrets":[{"name":"redhat-registry-pull-secret"}],"nodeSelector":{"kubernetes.io/hostname":"ip-10-12-2-101.us-west-2.compute.internal"},"tolerations":[{"effect":"NoSchedule","key":"nvidia.com/gpu","operator":"Equal","value":"true"},{"effect":"NoSchedule","key":"node.kubernetes.io/disk-pressure","operator":"Exists"}]}}}
+    serving.kserve.io/enable-prefix-cache: "true"
+  creationTimestamp: "2026-06-24T16:34:21Z"
+  finalizers:
+  - serving.kserve.io/llmisvc-finalizer
+  generation: 4
+  labels:
+    test: gpu-consolidation
+  name: qwen32b-a
+  namespace: llm-test
+  resourceVersion: "7793338"
+  uid: 7609e260-6b3d-4ab4-ad2b-e6d251c58f2d
+spec:
+  baseRefs:
+  - name: v3-4-0-kserve-config-llm-template-nvidia-cuda
+  model:
+    name: Qwen/Qwen2.5-0.5B-Instruct
+    uri: hf://Qwen/Qwen2.5-0.5B-Instruct
+  replicas: 1
+  router:
+    gateway: {}
+    route: {}
+    scheduler:
+      config:
+        inline:
+          apiVersion: inference.networking.x-k8s.io/v1alpha1
+          kind: EndpointPickerConfig
+          plugins:
+          - type: queue-scorer
+          - type: prefix-cache-scorer
+          - type: max-score-picker
+          schedulingProfiles:
+          - name: default
+            plugins:
+            - pluginRef: queue-scorer
+              weight: 2
+            - pluginRef: prefix-cache-scorer
+              weight: 3
+            - pluginRef: max-score-picker
+      template:
+        containers:
+        - image: ghcr.io/llm-d/llm-d-inference-scheduler:v0.8.0
+          name: main
+          resources: {}
+        - name: tokenizer
+          resources: {}
+        imagePullSecrets:
+        - name: redhat-registry-pull-secret
+  template:
+    containers:
+    - name: main
+      resources: {}
+    imagePullSecrets:
+    - name: redhat-registry-pull-secret
+    nodeSelector:
+      kubernetes.io/hostname: ip-10-12-2-246.us-west-2.compute.internal
+    tolerations:
+    - effect: NoSchedule
+      key: nvidia.com/gpu
+      operator: Equal
+      value: "true"
+    - effect: NoSchedule
+      key: node.kubernetes.io/disk-pressure
+      operator: Exists
+status:
+  addresses:
+  - name: gateway-external
+    url: http://aefc7e10f44604760a801dfb2c34b36b-64674702.us-west-2.elb.amazonaws.com/llm-test/qwen32b-a
+  - name: gateway-internal
+    url: http://inference-gateway-istio.redhat-ods-applications.svc.cluster.local/llm-test/qwen32b-a
+  annotations:
+    serving.kserve.io/config-llm-decode-template: v3-4-0-kserve-config-llm-decode-template
+    serving.kserve.io/config-llm-decode-worker-data-parallel: v3-4-0-kserve-config-llm-decode-worker-data-parallel
+    serving.kserve.io/config-llm-prefill-template: v3-4-0-kserve-config-llm-prefill-template
+    serving.kserve.io/config-llm-prefill-worker-data-parallel: v3-4-0-kserve-config-llm-prefill-worker-data-parallel
+    serving.kserve.io/config-llm-router-route: v3-4-0-kserve-config-llm-router-route
+    serving.kserve.io/config-llm-scheduler: v3-4-0-kserve-config-llm-scheduler
+    serving.kserve.io/config-llm-template: v3-4-0-kserve-config-llm-template
+    serving.kserve.io/config-llm-worker-data-parallel: v3-4-0-kserve-config-llm-worker-data-parallel
+  conditions:
+  - lastTransitionTime: "2026-06-24T16:35:04Z"
+    severity: Info
+    status: "True"
+    type: HTTPRoutesReady
+  - lastTransitionTime: "2026-06-24T16:34:36Z"
+    severity: Info
+    status: "True"
+    type: InferencePoolReady
+  - lastTransitionTime: "2026-06-27T18:20:02Z"
+    severity: Info
+    status: "True"
+    type: MainWorkloadReady
+  - lastTransitionTime: "2026-06-24T16:34:27Z"
+    severity: Info
+    status: "True"
+    type: PresetsCombined
+  - lastTransitionTime: "2026-06-27T18:20:02Z"
+    status: "True"
+    type: Ready
+  - lastTransitionTime: "2026-06-25T21:39:25Z"
+    status: "True"
+    type: RouterReady
+  - lastTransitionTime: "2026-06-25T21:39:25Z"
+    severity: Info
+    status: "True"
+    type: SchedulerWorkloadReady
+  - lastTransitionTime: "2026-06-27T18:20:02Z"
+    status: "True"
+    type: WorkloadsReady
+  observedGeneration: 4
+  url: http://aefc7e10f44604760a801dfb2c34b36b-64674702.us-west-2.elb.amazonaws.com/llm-test/qwen32b-a
