@@ -1411,11 +1411,10 @@ function drawLatency(canvasId, cssH, yLabelId, span) {
       const last = tenantBPts[tenantBPts.length - 1];
       const dotX = xOf(last.t);
       const dotY = yOf(Math.min(last[metric], yMax));
-      const isSwitched = switchTime && last.t >= switchTime;
-      const color = isSwitched ? TENANT_COLORS["premium-tenant-b"] : "#0891b2";
-      const label = isSwitched ? "qwen-a" : "qwen-b";
-      // Debug logging (will remove after fix)
-      if (Math.random() < 0.01) console.log('[Label Debug]', {switchTime, lastT: last.t, isSwitched, label});
+      // Use actual endpoint from server data if available, otherwise fall back to time-based
+      const actualEndpoint = last.endpoint;
+      const label = actualEndpoint || (switchTime && last.t >= switchTime ? "qwen-a" : "qwen-b");
+      const color = (label === "qwen-a") ? TENANT_COLORS["premium-tenant-b"] : "#0891b2";
       ctx.fillStyle = color;
       // Draw dot ON the line
       ctx.beginPath();
@@ -2592,11 +2591,10 @@ function drawLiveQPS(canvasId, cssH, yLabelId, span) {
       const last = tenantBLinePts[tenantBLinePts.length - 1];
       const dotX = xOf(last.t);
       const dotY = yOf(Math.min(last.qps, yMax));
-      const isSwitched = switchTime && last.t >= switchTime;
-      const color = isSwitched ? TENANT_COLORS["premium-tenant-b"] : "#0891b2";
-      const label = isSwitched ? "qwen-a" : "qwen-b";
-      // Debug logging (will remove after fix)
-      if (Math.random() < 0.01) console.log('[Label Debug]', {switchTime, lastT: last.t, isSwitched, label});
+      // Use actual endpoint from server data if available, otherwise fall back to time-based
+      const actualEndpoint = last.endpoint;
+      const label = actualEndpoint || (switchTime && last.t >= switchTime ? "qwen-a" : "qwen-b");
+      const color = (label === "qwen-a") ? TENANT_COLORS["premium-tenant-b"] : "#0891b2";
       ctx.fillStyle = color;
       // Draw dot ON the line
       ctx.beginPath();

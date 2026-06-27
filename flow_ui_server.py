@@ -676,6 +676,18 @@ async def handle_stats(request: web.Request) -> web.Response:
             exp_stats = experiment_stats(metrics, fid, exp["start"], now, exp["counts0"].get(fid, {}))
         else:
             exp_stats = exp["results"].get(fid)
+        # For GPU Consolidation test, track actual endpoint being used
+        endpoint_name = None
+        if fid == "premium-tenant-b" and "shared_generators" in app:
+            for gen in app["shared_generators"]:
+                if gen.fairness_id == fid:
+                    # Extract endpoint name from URL (e.g., qwen32b-a or qwen32b-b)
+                    if "qwen32b-a" in gen.endpoint or "qwen-a" in gen.endpoint:
+                        endpoint_name = "qwen-a"
+                    elif "qwen32b-b" in gen.endpoint or "qwen-b" in gen.endpoint:
+                        endpoint_name = "qwen-b"
+                    break
+
         per_tenant.append({
             "fairness_id": fid,
             "objective": t.inference_objective,
@@ -685,6 +697,7 @@ async def handle_stats(request: web.Request) -> web.Response:
             **s,
             "exp": exp_stats,
             "samples": raw_samples(metrics, fid, since, now),
+            "endpoint": endpoint_name,  # Actual endpoint for GPU consolidation
         })
 
     capacity = app["args"].capacity
