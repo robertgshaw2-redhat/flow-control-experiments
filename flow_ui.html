@@ -828,7 +828,7 @@ function buildTenantControls() {
           <span class="name" style="color:${TENANT_COLORS[t.fairness_id]}">${t.fairness_id}</span>
           <span class="obj">· ${t.objective} · pri ${t.priority}</span>
         </div>
-        <span class="val" id="val-${t.fairness_id}">${m.fmt(cur)}</span>
+        <span class="val" id="val-${t.fairness_id}" style="color:${TENANT_COLORS[t.fairness_id]}">${m.fmt(cur)}</span>
       </div>
       <div class="tenant-body">
         <input type="range" min="0" max="${max}" step="${m.step}" value="${cur}"
@@ -1281,21 +1281,147 @@ function drawLatency(canvasId, cssH, yLabelId, span) {
   const xOf = t => padL + W * ((t - tMin) / (tMax - tMin));
   const yOf = v => padT + H * (1 - v / yMax);
 
+  // Check if this is GPU Consolidation test and if scenario is playing
+  const isGPUConsolidation = scnState.name === "Test 1: GPU Consolidation" && scnState.playing;
+  // Use actual switchTime from server (set when endpoint actually switches)
+  const switchTime = scnState.switchTime ? (scnState.switchTime * 1000) : null;
+
   // capacity context line is not meaningful for latency; skip.
   for (const fid of Object.keys(history)) {
     const pts = history[fid].filter(p => p.t >= tMin && p[metric] !== null && p[metric] !== undefined);
     if (!pts.length) continue;
-    ctx.strokeStyle = TENANT_COLORS[fid]; ctx.lineWidth = 2; ctx.lineJoin = "round";
-    ctx.beginPath();
-    pts.forEach((p, i) => {
-      const x = xOf(p.t), y = yOf(Math.min(p[metric], yMax));
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-    // latest point marker
-    const last = pts[pts.length - 1];
-    ctx.fillStyle = TENANT_COLORS[fid];
-    ctx.beginPath(); ctx.arc(xOf(last.t), yOf(Math.min(last[metric], yMax)), 3, 0, 7); ctx.fill();
+
+    const isTenantB = fid === "premium-tenant-b";
+
+    // For tenant-b in GPU Consolidation: draw with color change at endpoint switch
+    if (isGPUConsolidation && isTenantB && switchTime) {
+      // Split points into pre-switch (qwen-b) and post-switch (qwen-a)
+      const preSwitch = pts.filter(p => p.t < switchTime);
+      const postSwitch = pts.filter(p => p.t >= switchTime);
+
+      // Draw pre-switch segment (darker cyan for qwen-b)
+      if (preSwitch.length) {
+        ctx.strokeStyle = "#0891b2";  // Darker cyan for qwen-b
+        ctx.lineWidth = 2; ctx.lineJoin = "round";
+        ctx.beginPath();
+        preSwitch.forEach((p, i) => {
+          const x = xOf(p.t), y = yOf(Math.min(p[metric], yMax));
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+
+      // Draw post-switch segment (bright cyan for qwen-a)
+      if (postSwitch.length) {
+        ctx.strokeStyle = TENANT_COLORS[fid];  // Bright cyan for qwen-a
+        ctx.lineWidth = 2; ctx.lineJoin = "round";
+        ctx.beginPath();
+        postSwitch.forEach((p, i) => {
+          const x = xOf(p.t), y = yOf(Math.min(p[metric], yMax));
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+
+      // Latest point marker (use current color based on time)
+      const last = pts[pts.length - 1];
+      ctx.fillStyle = last.t >= switchTime ? TENANT_COLORS[fid] : "#0891b2";
+      ctx.beginPath(); ctx.arc(xOf(last.t), yOf(Math.min(last[metric], yMax)), 3, 0, 7); ctx.fill();
+    } else {
+      // Normal rendering for other tenants
+      ctx.strokeStyle = TENANT_COLORS[fid]; ctx.lineWidth = 2; ctx.lineJoin = "round";
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const x = xOf(p.t), y = yOf(Math.min(p[metric], yMax));
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      // latest point marker
+      const last = pts[pts.length - 1];
+      ctx.fillStyle = TENANT_COLORS[fid];
+      ctx.beginPath(); ctx.arc(xOf(last.t), yOf(Math.min(last[metric], yMax)), 3, 0, 7); ctx.fill();
+    }
+  }
+
+  // Add endpoint labels that follow the latest points for GPU Consolidation test (Measured Latency)
+  if (isGPUConsolidation) {
+    ctx.font = "9px monospace";
+    ctx.textAlign = "center";
+
+    // Helper to draw label with background box (smart positioning)
+    const drawLabelSmartLatency = (text, x, dotY, color, extraOffsetUp = 0) => {
+      const metrics = ctx.measureText(text);
+      const padding = 3;
+      const boxWidth = metrics.width + padding * 2;
+      const boxHeight = 12;
+
+      // Check horizontal bounds - shift left if would go off right edge
+      const maxX = padL + W;
+      let finalX = x;
+      if (x + boxWidth / 2 > maxX) {
+        finalX = maxX - boxWidth / 2 - 2;  // Shift left to fit
+      }
+
+      // Check if label would be cut off at top - if so, position below dot
+      const labelAboveY = dotY - 5 + extraOffsetUp;
+      const boxTop = labelAboveY - boxHeight;
+
+      let finalY;
+      if (boxTop < padT + 2) {
+        // Would be cut off - position BELOW the dot
+        finalY = dotY + 15;
+        // Draw background box below
+        ctx.fillStyle = getCSS("--panel");
+        ctx.fillRect(finalX - boxWidth / 2, finalY - 2, boxWidth, boxHeight);
+        // Draw text
+        ctx.fillStyle = color;
+        ctx.textBaseline = "top";
+        ctx.fillText(text, finalX, finalY);
+      } else {
+        // Room above - position above the dot
+        finalY = labelAboveY;
+        // Draw background box
+        ctx.fillStyle = getCSS("--panel");
+        ctx.fillRect(finalX - boxWidth / 2, finalY - boxHeight, boxWidth, boxHeight);
+        // Draw text
+        ctx.fillStyle = color;
+        ctx.textBaseline = "bottom";
+        ctx.fillText(text, finalX, finalY - 1);
+      }
+    };
+
+    // Tenant A: always qwen-a (green dot on line, label with background)
+    const tenantAPts = (history["premium-tenant-a"] || []).filter(p => p.t >= tMin && p[metric] != null);
+    if (tenantAPts.length) {
+      const last = tenantAPts[tenantAPts.length - 1];
+      const dotX = xOf(last.t);
+      const dotY = yOf(Math.min(last[metric], yMax));
+      ctx.fillStyle = TENANT_COLORS["premium-tenant-a"];  // Green
+      // Draw dot ON the line
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, 3, 0, 2 * Math.PI);
+      ctx.fill();
+      // Draw label with smart positioning
+      drawLabelSmartLatency("qwen-a", dotX, dotY, TENANT_COLORS["premium-tenant-a"]);
+    }
+
+    // Tenant B: qwen-b or qwen-a depending on switchTime
+    const tenantBPts = (history["premium-tenant-b"] || []).filter(p => p.t >= tMin && p[metric] != null);
+    if (tenantBPts.length) {
+      const last = tenantBPts[tenantBPts.length - 1];
+      const dotX = xOf(last.t);
+      const dotY = yOf(Math.min(last[metric], yMax));
+      const isSwitched = switchTime && last.t >= switchTime;
+      const color = isSwitched ? TENANT_COLORS["premium-tenant-b"] : "#0891b2";
+      const label = isSwitched ? "qwen-a" : "qwen-b";
+      ctx.fillStyle = color;
+      // Draw dot ON the line
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, 3, 0, 2 * Math.PI);
+      ctx.fill();
+      // Draw label with smart positioning (offset up to avoid overlap with tenant-a)
+      drawLabelSmartLatency(label, dotX, dotY, color, -15);
+    }
   }
 
   if (Object.values(history).every(h => h.filter(p => p.t >= tMin && p[metric] != null).length === 0)) {
@@ -1351,16 +1477,13 @@ const TEST_TENANT_CONFIGS = {
     "premium-tenant-a", "premium-tenant-b"  // Only 2 premium tenants (simulating 2 GPUs → 1 GPU)
   ],
   "Test 2: Priority Differentiation": [
-    "premium-tenant-a", "premium-tenant-b", "premium-tenant-c",
-    "standard-tenant-a", "standard-tenant-b"
+    "premium-tenant-a", "standard-tenant-a"  // One premium, one standard to show priority protection
   ],
   "Test 3: Fairness Validation": [
-    "premium-tenant-a", "premium-tenant-b", "premium-tenant-c",
-    "standard-tenant-a", "standard-tenant-b"
+    "premium-tenant-a", "premium-tenant-b", "premium-tenant-c"  // Three premium tenants to test fairness
   ],
   "Test 4: Priority Inversion Prevention": [
-    "premium-tenant-a", "premium-tenant-b", "premium-tenant-c",
-    "standard-tenant-a", "standard-tenant-b"
+    "premium-tenant-a", "standard-tenant-a"  // Premium bypasses standard batch queue
   ],
   "Sinusoidal": ["premium-tenant-a", "standard-tenant-a"],
   "Spike": ["premium-tenant-a", "standard-tenant-a"],
@@ -1383,7 +1506,7 @@ function buildPresets() {
         // Sinusoidal patterns (6-14 concurrency, 20s period for faster oscillation)
         // Both tenants use sine waves; actual test stages tenant-b to start at t=120s
         "premium-tenant-a": { type: "sine", base: 10, amplitude: 4, phase: 0, period: 20 },
-        "premium-tenant-b": { type: "sine", base: 10, amplitude: 4, phase: 0.25, period: 20 },  // Slight phase offset for visibility
+        "premium-tenant-b": { type: "sine", base: 10, amplitude: 4, phase: 0.35, period: 20 },  // Phase offset for visibility
       },
     },
     {
@@ -1396,99 +1519,66 @@ function buildPresets() {
         { until: 120, label: "Return to baseline" }
       ],
       curves: {
-        // Premium: 8 conc baseline, ramp to 16, back to 8
-        // Split across 3 premium tenants (distribute roughly equally)
-        "premium-tenant-a": { type: "pulses", base: 2.7, period: 120, pulses: [
-          { at: 0, dur: 60, amp: 0 },           // 0-60s: 2.7 conc
-          { at: 60, dur: 30, amp: 2.6 },        // 60-90s: +2.6 = 5.3 conc
-          { at: 90, dur: 30, amp: 0 }           // 90-120s: back to 2.7
-        ]},
-        "premium-tenant-b": { type: "pulses", base: 2.7, period: 120, pulses: [
-          { at: 0, dur: 60, amp: 0 },
-          { at: 60, dur: 30, amp: 2.6 },
-          { at: 90, dur: 30, amp: 0 }
-        ]},
-        "premium-tenant-c": { type: "pulses", base: 2.6, period: 120, pulses: [
-          { at: 0, dur: 60, amp: 0 },
-          { at: 60, dur: 30, amp: 2.8 },
-          { at: 90, dur: 30, amp: 0 }
-        ]},
-        // Standard: 8 conc baseline, spike to 32 at t=30s, stay high through t=90s
-        // Split across 2 standard tenants
-        "standard-tenant-a": { type: "pulses", base: 4, period: 120, pulses: [
-          { at: 30, dur: 60, amp: 12 }  // 30-90s: 4+12 = 16 conc
-        ]},
-        "standard-tenant-b": { type: "pulses", base: 4, period: 120, pulses: [
-          { at: 30, dur: 60, amp: 12 }
+        // Premium: noisy sine wave around 15 (realistic variability, higher baseline)
+        "premium-tenant-a": { type: "sine", base: 15, amplitude: 3, phase: 0, period: 20 },
+
+        // Standard: gradual ramp up to heavy flood, then ramp down (realistic traffic spike)
+        // 0-30s: ramp from 10 → 20
+        // 30-60s: spike from 20 → 60 (heavy flood)
+        // 60-75s: stay at 60 (flood peak)
+        // 75-105s: ramp down 60 → 10 (flood subsides)
+        // 105-120s: baseline at 10
+        "standard-tenant-a": { type: "pulses", base: 10, period: 120, pulses: [
+          { at: 0, dur: 30, amp: 10 },    // 0-30s: ramp to 20
+          { at: 30, dur: 30, amp: 40 },   // 30-60s: spike to 60
+          { at: 60, dur: 15, amp: 50 },   // 60-75s: peak at 60
+          { at: 75, dur: 30, amp: 25 },   // 75-105s: ramp down to 35
+          { at: 105, dur: 15, amp: 0 }    // 105-120s: back to 10
         ]},
       },
     },
     {
       name: "Test 3: Fairness Validation",
-      desc: "<b>Proves:</b> Fair queueing prevents tenant monopolization. <b>What you'll see:</b> Similar performance across all tenants within same priority tier despite load imbalance.",
-      period: 90, loop: false, window: 90,
+      desc: "<b>Proves:</b> Fair queueing prevents tenant monopolization. <b>What you'll see:</b> Similar P95 latency across all 3 premium tenants despite tenant-a spiking and tenant-c joining late.",
+      period: 150, loop: false, window: 150,
       phases: [
-        { until: 30, label: "Balanced load (16 premium, 16 standard)" },
-        { until: 60, label: "Premium spike (32 premium, 8 standard)" },
-        { until: 90, label: "Standard spike (8 premium, 32 standard)" }
+        { until: 30, label: "Tenant-a and tenant-b start (noisy sine)" },
+        { until: 90, label: "Tenant-c joins (all 3 running, fairness test)" },
+        { until: 150, label: "Tenant-a spikes (fairness maintained despite imbalance)" }
       ],
       curves: {
-        // Phase 1 (0-30s): 16 premium total (5.3 each), 16 standard total (8 each)
-        // Phase 2 (30-60s): 32 premium total (10.7 each), 8 standard total (4 each)
-        // Phase 3 (60-90s): 8 premium total (2.7 each), 32 standard total (16 each)
-        "premium-tenant-a": { type: "pulses", base: 5.3, period: 90, pulses: [
-          { at: 30, dur: 30, amp: 5.4 },   // 30-60s: 10.7 conc
-          { at: 60, dur: 30, amp: -2.6 }   // 60-90s: 2.7 conc
+        // Tenant-a: 8 conc baseline, spikes to 20 at 90s
+        "premium-tenant-a": { type: "pulses", base: 8, period: 150, pulses: [
+          { at: 90, dur: 60, amp: 12 }  // 90-150s: spike to 20
         ]},
-        "premium-tenant-b": { type: "pulses", base: 5.3, period: 90, pulses: [
-          { at: 30, dur: 30, amp: 5.4 },
-          { at: 60, dur: 30, amp: -2.6 }
-        ]},
-        "premium-tenant-c": { type: "pulses", base: 5.4, period: 90, pulses: [
-          { at: 30, dur: 30, amp: 5.3 },
-          { at: 60, dur: 30, amp: -2.7 }
-        ]},
-        "standard-tenant-a": { type: "pulses", base: 8, period: 90, pulses: [
-          { at: 30, dur: 30, amp: -4 },    // 30-60s: 4 conc
-          { at: 60, dur: 30, amp: 8 }      // 60-90s: 16 conc
-        ]},
-        "standard-tenant-b": { type: "pulses", base: 8, period: 90, pulses: [
-          { at: 30, dur: 30, amp: -4 },
-          { at: 60, dur: 30, amp: 8 }
+        // Tenant-b: constant 10 throughout (slightly different from a)
+        "premium-tenant-b": { type: "pulses", base: 10, period: 150, pulses: [] },
+        // Tenant-c: starts at 0, ramps to 12 at 30s
+        "premium-tenant-c": { type: "pulses", base: 0, period: 150, pulses: [
+          { at: 30, dur: 120, amp: 12 }  // 30-150s: runs at 12
         ]},
       },
     },
     {
       name: "Test 4: Priority Inversion Prevention",
-      desc: "<b>Proves:</b> Batch workloads can't starve interactive traffic. <b>What you'll see:</b> Premium requests bypass standard queue flood, maintaining low latency despite 50 standard requests in queue.",
+      desc: "<b>Proves:</b> Batch workloads can't starve interactive traffic. <b>What you'll see:</b> Premium bypasses standard queue flood, maintaining low P95 TTFT despite high standard load.",
       period: 90, loop: false, window: 90,
       phases: [
-        { until: 30, label: "Standard flood builds (50 requests queued)" },
-        { until: 60, label: "Premium bypass test (5 premium cut the queue)" },
+        { until: 30, label: "Standard batch flood starts (32 conc)" },
+        { until: 60, label: "Premium arrives and bypasses (8 conc)" },
         { until: 90, label: "Cooldown" }
       ],
       curves: {
-        // Phase 1 (0-60s): Flood with 50 standard requests
-        // Phase 2 (30-60s): 5 premium requests arrive and should bypass queue
-        // Phase 3 (60-90s): Cooldown
+        // Phase 1 (0-30s): Standard batch flood starts - 32 concurrency
+        // Phase 2 (30-60s): Premium traffic arrives (8 conc) - should bypass standard queue
+        // Phase 3 (60-90s): Both return to 0
         "premium-tenant-a": { type: "pulses", base: 0, period: 90, pulses: [
-          { at: 30, dur: 30, amp: 1.7 },  // 30-60s: 1.7 conc (total 5 across 3 tenants)
-          { at: 60, dur: 30, amp: -1.7 }  // 60-90s: back to 0
+          { at: 30, dur: 30, amp: 8 },    // 30-60s: 8 conc (bypasses queue)
+          { at: 60, dur: 30, amp: -8 }    // 60-90s: back to 0
         ]},
-        "premium-tenant-b": { type: "pulses", base: 0, period: 90, pulses: [
-          { at: 30, dur: 30, amp: 1.7 },
-          { at: 60, dur: 30, amp: -1.7 }
-        ]},
-        "premium-tenant-c": { type: "pulses", base: 0, period: 90, pulses: [
-          { at: 30, dur: 30, amp: 1.6 },
-          { at: 60, dur: 30, amp: -1.6 }
-        ]},
-        // Standard: Heavy load from 0-60s, then cooldown
-        "standard-tenant-a": { type: "pulses", base: 25, period: 90, pulses: [
-          { at: 60, dur: 30, amp: -25 }  // 60-90s: cooldown to 0
-        ]},
-        "standard-tenant-b": { type: "pulses", base: 25, period: 90, pulses: [
-          { at: 60, dur: 30, amp: -25 }
+        // Standard: Batch workload - high from start, stays high when premium arrives
+        "standard-tenant-a": { type: "pulses", base: 32, period: 90, pulses: [
+          { at: 60, dur: 30, amp: -32 }  // 60-90s: cooldown to 0
         ]},
       },
     },
@@ -2110,7 +2200,7 @@ function drawPreview(canvasId) {
   if (live) {
     for (const fid in scnBuilder.curves)
       for (const p of (history[fid] || []))
-        if (p.t >= tMin && p.target_qps != null && p.target_qps > yMax) yMax = p.target_qps;
+        if (p.t >= tMin && p.qps != null && p.qps > yMax) yMax = p.qps;
   } else {
     for (const fid in scnBuilder.curves)
       for (let i = 0; i <= N; i++) { const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], i / N)); if (v > yMax) yMax = v; }
@@ -2136,11 +2226,11 @@ function drawPreview(canvasId) {
   if (live) {
     const xOf = t => padL + W * ((t - tMin) / (span * 1000));
     for (const fid in scnBuilder.curves) {
-      const pts = (history[fid] || []).filter(p => p.t >= tMin && p.target_qps != null);
+      const pts = (history[fid] || []).filter(p => p.t >= tMin && p.qps != null);
       if (!pts.length) continue;
       ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
       ctx.beginPath();
-      pts.forEach((p, i) => { const x = xOf(p.t), y = yOf(Math.min(p.target_qps, yMax)); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+      pts.forEach((p, i) => { const x = xOf(p.t), y = yOf(Math.min(p.qps, yMax)); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
       ctx.stroke();
     }
   } else {
@@ -2152,37 +2242,180 @@ function drawPreview(canvasId) {
     for (const fid in scnBuilder.curves) {
       if (!activeTenants.includes(fid)) continue;  // Skip inactive tenants
 
-      // For GPU Consolidation: tenant-b only appears in Phase 2 (right half, after 120s)
       const isTenantB = fid === "premium-tenant-b";
-      const startFraction = (isGPUConsolidation && isTenantB) ? 0.5 : 0;  // Start at 50% (120s/240s) for tenant-b
+      const startFraction = 0;  // Both tenants visible from beginning
 
-      ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
-      ctx.beginPath();
-      let firstPoint = true;
-      for (let i = 0; i <= N; i++) {
-        const frac = i / N;
-        if (frac < startFraction) continue;  // Skip points before start time
-        const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], frac)), x = xOf(frac), y = yOf(Math.min(v, yMax));
-        firstPoint ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-        firstPoint = false;
+      // For tenant-b in GPU Consolidation: draw in two segments with different colors
+      if (isGPUConsolidation && isTenantB) {
+        const baseColor = TENANT_COLORS[fid];
+
+        // Phase 1: tenant-b on qwen-b (slightly darker/muted cyan)
+        ctx.strokeStyle = "#0891b2";  // Darker cyan for qwen-b
+        ctx.lineWidth = 2; ctx.lineJoin = "round";
+        ctx.beginPath();
+        let firstPoint = true;
+        for (let i = 0; i <= N / 2; i++) {  // First half (0-120s)
+          const frac = i / N;
+          const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], frac)), x = xOf(frac), y = yOf(Math.min(v, yMax));
+          firstPoint ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          firstPoint = false;
+        }
+        ctx.stroke();
+
+        // Phase 2: tenant-b on qwen-a (brighter cyan)
+        ctx.strokeStyle = baseColor;  // Bright cyan for qwen-a
+        ctx.lineWidth = 2; ctx.lineJoin = "round";
+        ctx.beginPath();
+        firstPoint = true;
+        for (let i = N / 2; i <= N; i++) {  // Second half (120-240s)
+          const frac = i / N;
+          const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], frac)), x = xOf(frac), y = yOf(Math.min(v, yMax));
+          firstPoint ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          firstPoint = false;
+        }
+        ctx.stroke();
+      } else {
+        // Normal rendering for other tenants
+        ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent"); ctx.lineWidth = 2; ctx.lineJoin = "round";
+        ctx.beginPath();
+        let firstPoint = true;
+        for (let i = 0; i <= N; i++) {
+          const frac = i / N;
+          if (frac < startFraction) continue;  // Skip points before start time
+          const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], frac)), x = xOf(frac), y = yOf(Math.min(v, yMax));
+          firstPoint ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          firstPoint = false;
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
     }
 
-    // Add phase labels for Test 1 GPU Consolidation
+    // Add endpoint annotations with colored dots for GPU Consolidation
     if (scnBuilder.name === "Test 1: GPU Consolidation") {
+      ctx.font = "9px monospace";
+      ctx.textAlign = "center";
+
+      // Helper to draw label with background box (smart positioning)
+      const drawPreviewLabel = (text, x, dotY, color, extraOffsetUp = 0) => {
+        const metrics = ctx.measureText(text);
+        const padding = 3;
+        const boxWidth = metrics.width + padding * 2;
+        const boxHeight = 12;
+
+        // Check horizontal bounds - shift left if would go off right edge
+        const maxX = padL + W;
+        let finalX = x;
+        if (x + boxWidth / 2 > maxX) {
+          finalX = maxX - boxWidth / 2 - 2;  // Shift left to fit
+        }
+
+        // Check if label would be cut off at top - if so, position below dot
+        const labelAboveY = dotY - 5 + extraOffsetUp;
+        const boxTop = labelAboveY - boxHeight;
+
+        let finalY;
+        if (boxTop < padT + 2) {
+          // Would be cut off - position BELOW the dot
+          finalY = dotY + 15;
+          // Draw background box below
+          ctx.fillStyle = getCSS("--panel");
+          ctx.fillRect(finalX - boxWidth / 2, finalY - 2, boxWidth, boxHeight);
+          // Draw text
+          ctx.fillStyle = color;
+          ctx.textBaseline = "top";
+          ctx.fillText(text, finalX, finalY);
+        } else {
+          // Room above - position above the dot
+          finalY = labelAboveY;
+          // Draw background box
+          ctx.fillStyle = getCSS("--panel");
+          ctx.fillRect(finalX - boxWidth / 2, finalY - boxHeight, boxWidth, boxHeight);
+          // Draw text
+          ctx.fillStyle = color;
+          ctx.textBaseline = "bottom";
+          ctx.fillText(text, finalX, finalY - 1);
+        }
+      };
+
+      // Helper to get curve value at a fraction
+      const getCurveY = (fid, frac) => {
+        const v = evalCurve(scnBuilder.curves[fid], phaseAt(scnBuilder.curves[fid], frac));
+        return yOf(Math.min(v, yMax));
+      };
+
+      // Phase 1 (left side) - both tenants with endpoint labels
+      // Tenant A: qwen-a (green dot ON curve)
+      const tenantALeftFrac = 0.15;
+      const tenantALeftX = xOf(tenantALeftFrac);
+      const tenantALeftY = getCurveY("premium-tenant-a", tenantALeftFrac);
+      ctx.fillStyle = TENANT_COLORS["premium-tenant-a"];  // Green
+      ctx.beginPath();
+      ctx.arc(tenantALeftX, tenantALeftY, 3, 0, 2 * Math.PI);
+      ctx.fill();
+      drawPreviewLabel("qwen-a", tenantALeftX, tenantALeftY, TENANT_COLORS["premium-tenant-a"], -10);
+
+      // Tenant B: qwen-b (darker cyan dot ON curve)
+      const tenantBLeftFrac = 0.35;
+      const tenantBLeftX = xOf(tenantBLeftFrac);
+      const tenantBLeftY = getCurveY("premium-tenant-b", tenantBLeftFrac);
+      ctx.fillStyle = "#0891b2";  // Darker cyan for qwen-b
+      ctx.beginPath();
+      ctx.arc(tenantBLeftX, tenantBLeftY, 3, 0, 2 * Math.PI);
+      ctx.fill();
+      drawPreviewLabel("qwen-b", tenantBLeftX, tenantBLeftY, "#0891b2", -10);
+
+      // Phase 2 (right side) - both on qwen-a
+      // Tenant A: qwen-a (green dot ON curve)
+      const tenantARightFrac = 0.65;
+      const tenantARightX = xOf(tenantARightFrac);
+      const tenantARightY = getCurveY("premium-tenant-a", tenantARightFrac);
+      ctx.fillStyle = TENANT_COLORS["premium-tenant-a"];  // Green
+      ctx.beginPath();
+      ctx.arc(tenantARightX, tenantARightY, 3, 0, 2 * Math.PI);
+      ctx.fill();
+      drawPreviewLabel("qwen-a", tenantARightX, tenantARightY, TENANT_COLORS["premium-tenant-a"], -10);
+
+      // Tenant B: qwen-a (bright cyan dot ON curve)
+      const tenantBRightFrac = 0.85;
+      const tenantBRightX = xOf(tenantBRightFrac);
+      const tenantBRightY = getCurveY("premium-tenant-b", tenantBRightFrac);
+      ctx.fillStyle = TENANT_COLORS["premium-tenant-b"];  // Bright cyan for qwen-a
+      ctx.beginPath();
+      ctx.arc(tenantBRightX, tenantBRightY, 3, 0, 2 * Math.PI);
+      ctx.fill();
+      drawPreviewLabel("qwen-a", tenantBRightX, tenantBRightY, TENANT_COLORS["premium-tenant-b"], -10);
+
+      // Add vertical dashed line at switch point (120s = 50% across 240s window)
+      const switchX = padL + W * 0.5;
+      ctx.strokeStyle = getCSS("--muted");
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(switchX, padT);
+      ctx.lineTo(switchX, padT + H);
+      ctx.stroke();
+      ctx.setLineDash([]);  // Reset
+
+      // Add "↓ Switch" label
+      ctx.font = "10px monospace";
+      ctx.fillStyle = getCSS("--muted");
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText("↓ Switch", switchX, padT + 20);
+
+      // Add phase labels at the top
       ctx.font = "11px monospace";
       ctx.fillStyle = getCSS("--muted");
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
 
-      // Phase 1: Tenant A only (0-120s, left half)
-      const phase1X = padL + W * 0.25;  // 25% across (middle of phase 1)
-      ctx.fillText("Phase 1: Tenant A only", phase1X, padT + 4);
+      // Phase 1: 2 endpoints
+      const phase1X = padL + W * 0.25;  // 25% across
+      ctx.fillText("Phase 1: 2 endpoints (qwen-a + qwen-b)", phase1X, padT + 16);
 
-      // Phase 2: Both tenants (120-240s, right half)
-      const phase2X = padL + W * 0.75;  // 75% across (middle of phase 2)
-      ctx.fillText("Phase 2: A + B together", phase2X, padT + 4);
+      // Phase 2: 1 endpoint
+      const phase2X = padL + W * 0.75;  // 75% across
+      ctx.fillText("Phase 2: 1 endpoint (qwen-a consolidated)", phase2X, padT + 16);
     }
   }
 }
@@ -2208,7 +2441,7 @@ function drawLiveQPS(canvasId, cssH, yLabelId, span) {
   let yMax = 0;
   for (const fid of activeTenants) {
     for (const p of (history[fid] || [])) {
-      if (p.t >= tMin && p.target_qps != null && p.target_qps > yMax) yMax = p.target_qps;
+      if (p.t >= tMin && p.qps != null && p.qps > yMax) yMax = p.qps;
     }
   }
   yMax = niceCeil(Math.max(yMax, 0.1));
@@ -2234,17 +2467,142 @@ function drawLiveQPS(canvasId, cssH, yLabelId, span) {
   const yOf = v => padT + H * (1 - v / yMax);
   const xOf = t => padL + W * ((t - tMin) / (span * 1000));
 
+  const isGPUConsolidation = scnBuilder.name === "Test 1: GPU Consolidation" && scnState.playing;
+  const switchTime = scnState.switchTime ? (scnState.switchTime * 1000) : null;
+
   for (const fid of activeTenants) {
-    const pts = (history[fid] || []).filter(p => p.t >= tMin && p.target_qps != null && p.target_qps > 0);
+    const pts = (history[fid] || []).filter(p => p.t >= tMin && p.qps != null && p.qps > 0);
     if (!pts.length) continue;  // Skip if no data or all zeros
-    ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent");
-    ctx.lineWidth = 2; ctx.lineJoin = "round";
-    ctx.beginPath();
-    pts.forEach((p, i) => {
-      const x = xOf(p.t), y = yOf(Math.min(p.target_qps, yMax));
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+
+    const isTenantB = fid === "premium-tenant-b";
+
+    // For tenant-b in GPU Consolidation: draw with color change at endpoint switch
+    if (isGPUConsolidation && isTenantB && switchTime) {
+      // Split points into pre-switch (qwen-b) and post-switch (qwen-a)
+      const preSwitch = pts.filter(p => p.t < switchTime);
+      const postSwitch = pts.filter(p => p.t >= switchTime);
+
+      // Draw pre-switch segment (darker cyan for qwen-b)
+      if (preSwitch.length) {
+        ctx.strokeStyle = "#0891b2";  // Darker cyan for qwen-b
+        ctx.lineWidth = 2; ctx.lineJoin = "round";
+        ctx.beginPath();
+        preSwitch.forEach((p, i) => {
+          const x = xOf(p.t), y = yOf(Math.min(p.qps, yMax));
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+
+      // Draw post-switch segment (bright cyan for qwen-a)
+      if (postSwitch.length) {
+        ctx.strokeStyle = TENANT_COLORS[fid];  // Bright cyan for qwen-a
+        ctx.lineWidth = 2; ctx.lineJoin = "round";
+        ctx.beginPath();
+        postSwitch.forEach((p, i) => {
+          const x = xOf(p.t), y = yOf(Math.min(p.qps, yMax));
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+    } else {
+      // Normal rendering for other tenants
+      ctx.strokeStyle = TENANT_COLORS[fid] || getCSS("--accent");
+      ctx.lineWidth = 2; ctx.lineJoin = "round";
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const x = xOf(p.t), y = yOf(Math.min(p.qps, yMax));
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+  }
+
+  // Add endpoint labels that follow the latest points for GPU Consolidation test
+  if (isGPUConsolidation) {
+    ctx.font = "9px monospace";
+    ctx.textAlign = "center";
+
+    // Helper to draw label with background box (smart positioning)
+    const drawLabelSmart = (text, x, dotY, color, extraOffsetUp = 0) => {
+      const metrics = ctx.measureText(text);
+      const padding = 3;
+      const boxWidth = metrics.width + padding * 2;
+      const boxHeight = 12;
+
+      // Check horizontal bounds - shift left if would go off right edge
+      const maxX = padL + W;
+      let finalX = x;
+      if (x + boxWidth / 2 > maxX) {
+        finalX = maxX - boxWidth / 2 - 2;  // Shift left to fit
+      }
+
+      // Check if label would be cut off at top - if so, position below dot
+      const labelAboveY = dotY - 5 + extraOffsetUp;
+      const boxTop = labelAboveY - boxHeight;
+
+      let finalY;
+      if (boxTop < padT + 2) {
+        // Would be cut off - position BELOW the dot
+        finalY = dotY + 15;
+        // Draw background box below
+        ctx.fillStyle = getCSS("--panel");
+        ctx.fillRect(finalX - boxWidth / 2, finalY - 2, boxWidth, boxHeight);
+        // Draw text
+        ctx.fillStyle = color;
+        ctx.textBaseline = "top";
+        ctx.fillText(text, finalX, finalY);
+      } else {
+        // Room above - position above the dot
+        finalY = labelAboveY;
+        // Draw background box
+        ctx.fillStyle = getCSS("--panel");
+        ctx.fillRect(finalX - boxWidth / 2, finalY - boxHeight, boxWidth, boxHeight);
+        // Draw text
+        ctx.fillStyle = color;
+        ctx.textBaseline = "bottom";
+        ctx.fillText(text, finalX, finalY - 1);
+      }
+    };
+
+    // Tenant A: always qwen-a (green dot on line, label with background)
+    // Use same filter as line drawing to ensure dot is ON the line
+    const tenantALinePts = activeTenants.includes("premium-tenant-a")
+      ? (history["premium-tenant-a"] || []).filter(p => p.t >= tMin && p.qps != null && p.qps > 0)
+      : [];
+    if (tenantALinePts.length) {
+      const last = tenantALinePts[tenantALinePts.length - 1];
+      const dotX = xOf(last.t);
+      const dotY = yOf(Math.min(last.qps, yMax));
+      ctx.fillStyle = TENANT_COLORS["premium-tenant-a"];  // Green
+      // Draw dot ON the line
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, 3, 0, 2 * Math.PI);
+      ctx.fill();
+      // Draw label with smart positioning
+      drawLabelSmart("qwen-a", dotX, dotY, TENANT_COLORS["premium-tenant-a"]);
+    }
+
+    // Tenant B: qwen-b or qwen-a depending on switchTime
+    // Use same filter as line drawing to ensure dot is ON the line
+    const tenantBLinePts = activeTenants.includes("premium-tenant-b")
+      ? (history["premium-tenant-b"] || []).filter(p => p.t >= tMin && p.qps != null && p.qps > 0)
+      : [];
+    if (tenantBLinePts.length) {
+      const last = tenantBLinePts[tenantBLinePts.length - 1];
+      const dotX = xOf(last.t);
+      const dotY = yOf(Math.min(last.qps, yMax));
+      const isSwitched = switchTime && last.t >= switchTime;
+      const color = isSwitched ? TENANT_COLORS["premium-tenant-b"] : "#0891b2";
+      const label = isSwitched ? "qwen-a" : "qwen-b";
+      ctx.fillStyle = color;
+      // Draw dot ON the line
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, 3, 0, 2 * Math.PI);
+      ctx.fill();
+      // Draw label with smart positioning (offset up to avoid overlap with tenant-a)
+      drawLabelSmart(label, dotX, dotY, color, -15);
+    }
   }
 
   // Y-axis label

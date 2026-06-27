@@ -474,16 +474,38 @@ async def run_scenario_driver(control: dict, stop_event: asyncio.Event) -> None:
                     cp = float(curve.get("period") or 0.0)
                     return min(max(1.0, cp if cp > 0 else period), 3600.0)
 
+                # Zero out all tenants first, then set rates for tenants in the scenario
+                for fid in rates:
+                    rates[fid] = 0.0
                 for fid, curve in curves.items():
                     if fid in rates:
                         eff = eff_period(curve)
-                        # For GPU Consolidation: tenant-b starts at t=120s
-                        if fid == "premium-tenant-b" and elapsed < 120:
-                            rates[fid] = 0.0  # Not started yet
-                        else:
-                            # Always use modulo for curves so they keep oscillating
-                            p = (elapsed % eff) / eff
-                            rates[fid] = eval_curve(curve, p)
+                        # Both tenants run from start; tenant-b switches endpoints at 120s
+                        # Always use modulo for curves so they keep oscillating
+                        p = (elapsed % eff) / eff
+                        target_qps = eval_curve(curve, p)
+                        rates[fid] = target_qps
+
+                        # For Test 2-4, update generator's external_rate
+                        if "test2_gen_premium" in control:
+                            if fid == "premium-tenant-a":
+                                control["test2_gen_premium"].external_rate = target_qps
+                            elif fid == "standard-tenant-a":
+                                control["test2_gen_standard"].external_rate = target_qps
+
+                        if "test3_gen_a" in control:
+                            if fid == "premium-tenant-a":
+                                control["test3_gen_a"].external_rate = target_qps
+                            elif fid == "premium-tenant-b":
+                                control["test3_gen_b"].external_rate = target_qps
+                            elif fid == "premium-tenant-c":
+                                control["test3_gen_c"].external_rate = target_qps
+
+                        if "test4_gen_standard" in control:
+                            if fid == "premium-tenant-a":
+                                control["test4_gen_premium"].external_rate = target_qps
+                            elif fid == "standard-tenant-a":
+                                control["test4_gen_standard"].external_rate = target_qps
             else:
                 # Normal scenario driver logic
                 # Each tenant cycles on its own period (curve["period"]), falling back
@@ -507,6 +529,9 @@ async def run_scenario_driver(control: dict, stop_event: asyncio.Event) -> None:
                 else:
                     scn["elapsed"] = elapsed
                     scn["phase"] = (elapsed % window) / window if scn["loop"] else min(elapsed / window, 1.0)
+                    # Zero out all tenants first, then set rates for tenants in the scenario
+                    for fid in rates:
+                        rates[fid] = 0.0
                     for fid, curve in curves.items():
                         if fid in rates:
                             eff = eff_period(curve)
@@ -686,6 +711,7 @@ async def handle_stats(request: web.Request) -> web.Response:
             "loop": scn["loop"],
             "elapsed": scn["elapsed"],
             "phase": scn["phase"],
+            "switchTime": scn.get("switchTime"),  # For GPU Consolidation test
         },
         # An "experiment" is an independent measurement session: it marks a start
         # time and accumulates every metric since then, alongside (not instead of)
@@ -792,45 +818,70 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         session: aiohttp.ClientSession = app["session"]
 
         # Create shared generators for both tenants
-        endpoint = app["args"].url
+        # Tenant A always hits qwen-a
+        endpoint_a = app["args"].url  # qwen32b-a
+
+        # Tenant B starts on qwen-b, switches to qwen-a at 120s
+        gateway = app["args"].url.rsplit("/", 4)[0]  # Extract base gateway URL
+        endpoint_b_initial = f"{gateway}/llm-test/qwen32b-b/v1/completions"
+        endpoint_b_final = app["args"].url  # qwen32b-a
+
         generators = []
 
-        # Tenant A - runs for full duration with 20s sinusoidal period
+        # Tenant A - runs for full duration with noisy sinusoidal pattern on qwen-a
         gen_a = SharedRequestGenerator(
             fairness_id="premium-tenant-a",
-            endpoint=endpoint,
+            endpoint=endpoint_a,
             priority=100,
             base_concurrency=8,
             metrics=metrics,
             session=session,
-            traffic_pattern="sinusoidal",  # 0-16 concurrency, 20s period
+            traffic_pattern="noisy_sinusoidal",  # 6-14 concurrency with variance, 20s period
             model_name="Qwen/Qwen2.5-0.5B-Instruct",
             input_tokens=100,
-            output_tokens=100
+            output_tokens=100,
+            phase_offset=0.0  # No phase offset
         )
 
-        # Tenant B - starts after 2 minutes with same 20s sinusoidal period
+        # Tenant B - starts on qwen-b, then switches to qwen-a at 120s
         gen_b = SharedRequestGenerator(
             fairness_id="premium-tenant-b",
-            endpoint=endpoint,
+            endpoint=endpoint_b_initial,  # Starts on qwen-b
             priority=100,
             base_concurrency=8,
             metrics=metrics,
             session=session,
-            traffic_pattern="sinusoidal",  # 0-16 concurrency, 20s period
+            traffic_pattern="noisy_sinusoidal",  # 6-14 concurrency with variance, 20s period
             model_name="Qwen/Qwen2.5-0.5B-Instruct",
             input_tokens=100,
-            output_tokens=100
+            output_tokens=100,
+            phase_offset=0.35  # 126° offset to prevent wave overlap
         )
 
-        # Start tenant A immediately, B after 120s
+        # Start BOTH tenants immediately:
+        # - Tenant A on qwen-a
+        # - Tenant B on qwen-b (will switch to qwen-a at 120s)
         app["shared_gen_task_a"] = asyncio.create_task(gen_a.run())
+        app["shared_gen_task_b"] = asyncio.create_task(gen_b.run())
 
-        async def start_tenant_b_later():
+        async def switch_tenant_b_endpoint():
+            # Wait 120s then switch tenant B from qwen-b → qwen-a
             await asyncio.sleep(120)
-            app["shared_gen_task_b"] = asyncio.create_task(gen_b.run())
+            gen_b.endpoint = endpoint_b_final  # Switch to qwen-a
+            # Record the actual switch time for UI display (use wall-clock to match ts_ms)
+            control["scenario"]["switchTime"] = time.time()
+            print(f"[GPU Consolidation] Switched premium-tenant-b from qwen-b → qwen-a (consolidation)")
 
-        asyncio.create_task(start_tenant_b_later())
+        async def auto_stop_test():
+            # Auto-stop test after 240s (4 minutes)
+            await asyncio.sleep(240)
+            print(f"[GPU Consolidation] Test completed (240s), stopping...")
+            control["scenario"]["playing"] = False
+            for gen in app.get("shared_generators", []):
+                gen.stop()
+
+        asyncio.create_task(switch_tenant_b_endpoint())
+        asyncio.create_task(auto_stop_test())
         app["shared_generators"] = [gen_a, gen_b]
 
         # Mark scenario as playing and set up curves for QPS graph display
@@ -849,10 +900,12 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
                 "type": "sine",
                 "base": 10,
                 "amplitude": 4,
-                "phase": 0.25,
+                "phase": 0.35,
                 "period": 20
             }
         }
+        # Force QPS mode for proper saturation detection with SharedRequestGenerator
+        control["mode"] = "qps"
         control["scenario"].update(
             playing=True,
             name=name,
@@ -863,6 +916,258 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             phase=0.0,
             curves=curves,
             using_shared_generator=True,  # Flag to skip rate updates in scenario driver
+            switchTime=None,  # Will be set when switch actually happens
+        )
+
+        return web.json_response({"ok": True, "name": name, "using_shared_generator": True})
+
+    # Test 2: Priority Differentiation - also use SharedRequestGenerator
+    if ("Priority Differentiation" in name or "Test 2" in name) and SHARED_GENERATOR_AVAILABLE:
+        ui_metrics = app["metrics"]
+        metrics = MetricsAdapter(ui_metrics)
+        session: aiohttp.ClientSession = app["session"]
+        endpoint = app["args"].url
+
+        # Premium tenant: noisy sine 12-18
+        gen_premium = SharedRequestGenerator(
+            fairness_id="premium-tenant-a",
+            endpoint=endpoint,
+            priority=100,
+            base_concurrency=15,
+            metrics=metrics,
+            session=session,
+            traffic_pattern="noisy_sinusoidal",
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            input_tokens=100,
+            output_tokens=100,
+            phase_offset=0.0
+        )
+
+        # Standard tenant: heavy spike pattern 10 → 60 (externally driven by scenario curve)
+        gen_standard = SharedRequestGenerator(
+            fairness_id="standard-tenant-a",
+            endpoint=endpoint,
+            priority=50,
+            base_concurrency=10,  # Base, will be overridden by external_rate
+            metrics=metrics,
+            session=session,
+            traffic_pattern="concurrent",
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            input_tokens=100,
+            output_tokens=100,
+            phase_offset=0.0
+        )
+
+        # Store generators in control dict so scenario driver can update external_rate
+        control["test2_gen_premium"] = gen_premium
+        control["test2_gen_standard"] = gen_standard
+
+        app["shared_gen_task_premium"] = asyncio.create_task(gen_premium.run())
+        app["shared_gen_task_standard"] = asyncio.create_task(gen_standard.run())
+
+        async def auto_stop_test2():
+            await asyncio.sleep(120)
+            print(f"[Test 2] Completed (120s), stopping...")
+            control["scenario"]["playing"] = False
+            for gen in [gen_premium, gen_standard]:
+                gen.stop()
+
+        asyncio.create_task(auto_stop_test2())
+        app["shared_generators"] = [gen_premium, gen_standard]
+
+        curves = {
+            "premium-tenant-a": {"type": "sine", "base": 15, "amplitude": 3, "phase": 0, "period": 20},
+            "standard-tenant-a": {"type": "pulses", "base": 10, "period": 120, "pulses": [
+                {"at": 0, "dur": 30, "amp": 10},
+                {"at": 30, "dur": 30, "amp": 40},
+                {"at": 60, "dur": 15, "amp": 50},
+                {"at": 75, "dur": 30, "amp": 25},
+                {"at": 105, "dur": 15, "amp": 0}
+            ]},
+        }
+        # Force QPS mode for proper saturation detection with SharedRequestGenerator
+        control["mode"] = "qps"
+        control["scenario"].update(
+            playing=True,
+            name=name,
+            period=120,
+            loop=False,
+            start=time.monotonic(),
+            elapsed=0.0,
+            phase=0.0,
+            curves=curves,
+            using_shared_generator=True,
+        )
+
+        return web.json_response({"ok": True, "name": name, "using_shared_generator": True})
+
+    # Test 3: Fairness Validation - three premium tenants with different patterns
+    if ("Fairness Validation" in name or "Test 3" in name) and SHARED_GENERATOR_AVAILABLE:
+        ui_metrics = app["metrics"]
+        metrics = MetricsAdapter(ui_metrics)
+        session: aiohttp.ClientSession = app["session"]
+        endpoint = app["args"].url
+
+        # Tenant A: starts at 8, spikes to 20 at 90s
+        gen_a = SharedRequestGenerator(
+            fairness_id="premium-tenant-a",
+            endpoint=endpoint,
+            priority=100,
+            base_concurrency=8,
+            metrics=metrics,
+            session=session,
+            traffic_pattern="concurrent",
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            input_tokens=100,
+            output_tokens=100,
+            phase_offset=0.0
+        )
+
+        # Tenant B: constant at 10
+        gen_b = SharedRequestGenerator(
+            fairness_id="premium-tenant-b",
+            endpoint=endpoint,
+            priority=100,
+            base_concurrency=10,
+            metrics=metrics,
+            session=session,
+            traffic_pattern="concurrent",
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            input_tokens=100,
+            output_tokens=100,
+            phase_offset=0.0
+        )
+
+        # Tenant C: starts at 30s, ramps to 12
+        gen_c = SharedRequestGenerator(
+            fairness_id="premium-tenant-c",
+            endpoint=endpoint,
+            priority=100,
+            base_concurrency=0,  # Starts at 0, will be set by external_rate
+            metrics=metrics,
+            session=session,
+            traffic_pattern="concurrent",
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            input_tokens=100,
+            output_tokens=100,
+            phase_offset=0.0
+        )
+
+        control["test3_gen_a"] = gen_a
+        control["test3_gen_b"] = gen_b
+        control["test3_gen_c"] = gen_c
+
+        app["shared_gen_task_test3_a"] = asyncio.create_task(gen_a.run())
+        app["shared_gen_task_test3_b"] = asyncio.create_task(gen_b.run())
+        app["shared_gen_task_test3_c"] = asyncio.create_task(gen_c.run())
+
+        async def auto_stop_test3():
+            await asyncio.sleep(150)
+            print(f"[Test 3] Completed (150s), stopping...")
+            control["scenario"]["playing"] = False
+            for gen in [gen_a, gen_b, gen_c]:
+                gen.stop()
+
+        asyncio.create_task(auto_stop_test3())
+        app["shared_generators"] = [gen_a, gen_b, gen_c]
+
+        curves = {
+            "premium-tenant-a": {"type": "pulses", "base": 8, "period": 150, "pulses": [
+                {"at": 90, "dur": 60, "amp": 12}  # Spikes to 20 at 90s
+            ]},
+            "premium-tenant-b": {"type": "pulses", "base": 10, "period": 150, "pulses": []},
+            "premium-tenant-c": {"type": "pulses", "base": 0, "period": 150, "pulses": [
+                {"at": 30, "dur": 120, "amp": 12}  # Starts at 30s, ramps to 12
+            ]},
+        }
+        control["mode"] = "qps"
+        control["scenario"].update(
+            playing=True,
+            name=name,
+            period=150,
+            loop=False,
+            start=time.monotonic(),
+            elapsed=0.0,
+            phase=0.0,
+            curves=curves,
+            using_shared_generator=True,
+        )
+
+        return web.json_response({"ok": True, "name": name, "using_shared_generator": True})
+
+    # Test 4: Priority Inversion Prevention - standard flood then premium arrival
+    if ("Priority Inversion" in name or "Test 4" in name) and SHARED_GENERATOR_AVAILABLE:
+        ui_metrics = app["metrics"]
+        metrics = MetricsAdapter(ui_metrics)
+        session: aiohttp.ClientSession = app["session"]
+        endpoint = app["args"].url
+
+        # Standard tenant: starts high (32), drops to 0 at 60s
+        gen_standard = SharedRequestGenerator(
+            fairness_id="standard-tenant-a",
+            endpoint=endpoint,
+            priority=50,
+            base_concurrency=32,
+            metrics=metrics,
+            session=session,
+            traffic_pattern="concurrent",
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            input_tokens=100,
+            output_tokens=100,
+            phase_offset=0.0
+        )
+
+        # Premium tenant: starts at 30s with 8 concurrency
+        gen_premium = SharedRequestGenerator(
+            fairness_id="premium-tenant-a",
+            endpoint=endpoint,
+            priority=100,
+            base_concurrency=0,  # Starts at 0
+            metrics=metrics,
+            session=session,
+            traffic_pattern="concurrent",
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            input_tokens=100,
+            output_tokens=100,
+            phase_offset=0.0
+        )
+
+        control["test4_gen_standard"] = gen_standard
+        control["test4_gen_premium"] = gen_premium
+
+        app["shared_gen_task_test4_standard"] = asyncio.create_task(gen_standard.run())
+        app["shared_gen_task_test4_premium"] = asyncio.create_task(gen_premium.run())
+
+        async def auto_stop_test4():
+            await asyncio.sleep(90)
+            print(f"[Test 4] Completed (90s), stopping...")
+            control["scenario"]["playing"] = False
+            for gen in [gen_standard, gen_premium]:
+                gen.stop()
+
+        asyncio.create_task(auto_stop_test4())
+        app["shared_generators"] = [gen_standard, gen_premium]
+
+        curves = {
+            "premium-tenant-a": {"type": "pulses", "base": 0, "period": 90, "pulses": [
+                {"at": 30, "dur": 30, "amp": 8},    # Starts at 30s with 8
+                {"at": 60, "dur": 30, "amp": -8}    # Back to 0 at 60s
+            ]},
+            "standard-tenant-a": {"type": "pulses", "base": 32, "period": 90, "pulses": [
+                {"at": 60, "dur": 30, "amp": -32}   # Drops to 0 at 60s
+            ]},
+        }
+        control["mode"] = "qps"
+        control["scenario"].update(
+            playing=True,
+            name=name,
+            period=90,
+            loop=False,
+            start=time.monotonic(),
+            elapsed=0.0,
+            phase=0.0,
+            curves=curves,
+            using_shared_generator=True,
         )
 
         return web.json_response({"ok": True, "name": name, "using_shared_generator": True})
