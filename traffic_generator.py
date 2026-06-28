@@ -153,6 +153,11 @@ class RequestGenerator:
             HEADER_INFERENCE_OBJECTIVE: getattr(self, 'inference_objective', 'llm-standard'),
         }
 
+        # Add auth token if configured (required for priority-based routing)
+        auth_token = getattr(self, 'auth_token', None)
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+
         start_time = time.monotonic()
         ttft: Optional[float] = None
         status = "Unknown"
