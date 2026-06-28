@@ -1010,9 +1010,8 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         session: aiohttp.ClientSession = app["session"]
         endpoint = app["args"].url
 
-        # Detect which service we're testing (qwen72b-a vs qwen72b-b)
-        is_72b = "qwen72b-a" in endpoint
-        concurrency_multiplier = 10 if is_72b else 1  # 10x for 72B model
+        # Get concurrency multiplier from args
+        concurrency_multiplier = getattr(app["args"], "concurrency_multiplier", 1)
 
         # Premium tenant: noisy sinusoidal
         gen_premium = SharedRequestGenerator(
@@ -1250,7 +1249,7 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
 
         return web.json_response({"ok": True, "name": name, "using_shared_generator": True})
 
-    # Test 4: Priority Inversion Prevention - standard flood then premium arrival
+    # Test 4: Priority Isolation - batch can't starve premium/standard
     if ("Priority Inversion" in name or "Test 4" in name) and SHARED_GENERATOR_AVAILABLE:
         # Stop any existing shared generators first
         if "shared_generators" in app:
@@ -1265,29 +1264,12 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         session: aiohttp.ClientSession = app["session"]
         endpoint = app["args"].url
 
-        # Standard tenant: starts high (32), drops to 0 at 60s
-        gen_standard = SharedRequestGenerator(
-            fairness_id="standard-tenant-a",
-            endpoint=endpoint,
-            priority=0,
-            base_concurrency=32,
-            metrics=metrics,
-            session=session,
-            traffic_pattern="concurrent",
-            model_name=model_name,
-            input_tokens=100,
-            output_tokens=100,
-            phase_offset=0.0
-        )
-        gen_standard.auth_token = STANDARD_TOKEN
-        gen_standard.inference_objective = "llm-standard"
-
-        # Premium tenant: starts at 30s with 8 concurrency
+        # Premium tenant: steady production load (3 concurrent throughout)
         gen_premium = SharedRequestGenerator(
             fairness_id="premium-tenant-a",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=0,  # Starts at 0
+            base_concurrency=3,
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",
@@ -1299,29 +1281,72 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         gen_premium.auth_token = PREMIUM_TOKEN
         gen_premium.inference_objective = "llm-premium"
 
-        control["test4_gen_standard"] = gen_standard
-        control["test4_gen_premium"] = gen_premium
+        # Standard tenant: steady production load (4 concurrent throughout)
+        gen_standard = SharedRequestGenerator(
+            fairness_id="standard-tenant-a",
+            endpoint=endpoint,
+            priority=0,
+            base_concurrency=4,
+            metrics=metrics,
+            session=session,
+            traffic_pattern="concurrent",
+            model_name=model_name,
+            input_tokens=100,
+            output_tokens=100,
+            phase_offset=0.0
+        )
+        gen_standard.auth_token = STANDARD_TOKEN
+        gen_standard.inference_objective = "llm-standard"
 
-        app["shared_gen_task_test4_standard"] = asyncio.create_task(gen_standard.run())
+        # Batch tenant: ramps up 0→8 at 30s to saturate capacity
+        gen_batch = SharedRequestGenerator(
+            fairness_id="batch-tenant-a",
+            endpoint=endpoint,
+            priority=-10,
+            base_concurrency=0,  # Starts at 0
+            metrics=metrics,
+            session=session,
+            traffic_pattern="concurrent",
+            model_name=model_name,
+            input_tokens=100,
+            output_tokens=100,
+            phase_offset=0.0
+        )
+        gen_batch.auth_token = BATCH_TOKEN
+        gen_batch.inference_objective = "llm-batch"
+
+        control["test4_gen_premium"] = gen_premium
+        control["test4_gen_standard"] = gen_standard
+        control["test4_gen_batch"] = gen_batch
+
+        # Start premium and standard immediately
         app["shared_gen_task_test4_premium"] = asyncio.create_task(gen_premium.run())
+        app["shared_gen_task_test4_standard"] = asyncio.create_task(gen_standard.run())
+        app["shared_gen_task_test4_batch"] = asyncio.create_task(gen_batch.run())
+
+        # Batch ramp at 30s: 0→8
+        async def batch_ramp():
+            await asyncio.sleep(30)
+            print("[Test 4] Ramping batch from 0 to 8 at 30s")
+            gen_batch.external_rate = 8
+
+        asyncio.create_task(batch_ramp())
 
         async def auto_stop_test4():
             await asyncio.sleep(90)
             print(f"[Test 4] Completed (90s), stopping...")
             control["scenario"]["playing"] = False
-            for gen in [gen_standard, gen_premium]:
+            for gen in [gen_premium, gen_standard, gen_batch]:
                 gen.stop()
 
         asyncio.create_task(auto_stop_test4())
-        app["shared_generators"] = [gen_standard, gen_premium]
+        app["shared_generators"] = [gen_premium, gen_standard, gen_batch]
 
         curves = {
-            "premium-tenant-a": {"type": "pulses", "base": 0, "period": 90, "pulses": [
-                {"at": 30, "dur": 30, "amp": 8},    # Starts at 30s with 8
-                {"at": 60, "dur": 30, "amp": -8}    # Back to 0 at 60s
-            ]},
-            "standard-tenant-a": {"type": "pulses", "base": 32, "period": 90, "pulses": [
-                {"at": 60, "dur": 30, "amp": -32}   # Drops to 0 at 60s
+            "premium-tenant-a": {"type": "constant", "base": 3, "period": 90},
+            "standard-tenant-a": {"type": "constant", "base": 4, "period": 90},
+            "batch-tenant-a": {"type": "pulses", "base": 0, "period": 90, "pulses": [
+                {"at": 30, "dur": 60, "amp": 8}    # Ramps to 8 at 30s, stays until 90s
             ]},
         }
         control["mode"] = "qps"
@@ -1936,6 +1961,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8080, help="Web UI port.")
     parser.add_argument("--max-concurrency", dest="max_concurrency", type=int, default=32, help="Upper bound for the concurrency sliders.")
     parser.add_argument("--max-qps", dest="max_qps", type=float, default=2.0, help="Nominal QPS scale: seeds default curve shapes and the QPS sliders' starting range (not a cap).")
+    parser.add_argument("--concurrency-multiplier", dest="concurrency_multiplier", type=int, default=1, help="Multiplier for Test 2 base concurrency (use 10+ for large models like 72B).")
     return parser.parse_args()
 
 

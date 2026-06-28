@@ -1,17 +1,22 @@
 {
   "name": "Test 4: Priority Inversion Prevention",
-  "period": 120.0,
+  "period": 90.0,
   "loop": false,
   "curves": {
-    "batch-tenant-a": {
-      "objective": "llm-batch",
-      "priority": -10,
-      "points": [[0, 8], [120, 8]]
+    "premium-tenant-a": {
+      "objective": "llm-premium",
+      "priority": 100,
+      "points": [[0, 3], [90, 3]]
     },
     "standard-tenant-a": {
       "objective": "llm-standard",
       "priority": 0,
-      "points": [[0, 0], [30, 0], [35, 4], [90, 4], [95, 0], [120, 0]]
+      "points": [[0, 4], [90, 4]]
+    },
+    "batch-tenant-a": {
+      "objective": "llm-batch",
+      "priority": -10,
+      "points": [[0, 0], [30, 0], [35, 8], [90, 8]]
     }
   }
 }
