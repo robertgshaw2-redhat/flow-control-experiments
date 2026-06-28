@@ -50,10 +50,13 @@ from aiohttp import web
 # Import shared traffic generator if available
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "gpu-consolidation-test"))
-    from traffic_generator import RequestGenerator as SharedRequestGenerator
+    from traffic_generator import RequestGenerator as SharedRequestGenerator, HEADER_FAIRNESS_ID, HEADER_INFERENCE_OBJECTIVE
     SHARED_GENERATOR_AVAILABLE = True
 except ImportError:
     SHARED_GENERATOR_AVAILABLE = False
+    # Define constants if import fails
+    HEADER_FAIRNESS_ID = "x-gateway-inference-fairness-id"
+    HEADER_INFERENCE_OBJECTIVE = "x-gateway-inference-objective"
 
 
 # Adapter to make UI server's metrics compatible with shared generator
@@ -76,6 +79,30 @@ class MetricsAdapter:
 # two tools drive traffic identically.
 from client import LoadGenerator, MetricsCollector, Tenant
 
+# ==============================================================================
+# AUTH TOKENS
+# ==============================================================================
+# Load ServiceAccount tokens for authenticated priority routing
+def load_auth_tokens():
+    """Load auth tokens from environment file."""
+    tokens = {}
+    token_file = "/tmp/flow-control-tokens.env"
+    if os.path.exists(token_file):
+        with open(token_file) as f:
+            for line in f:
+                if '=' in line:
+                    key, val = line.strip().split('=', 1)
+                    tokens[key] = val.strip('"')
+    return tokens
+
+AUTH_TOKENS = load_auth_tokens()
+PREMIUM_TOKEN = AUTH_TOKENS.get("PREMIUM_TOKEN")
+STANDARD_TOKEN = AUTH_TOKENS.get("STANDARD_TOKEN")
+BATCH_TOKEN = AUTH_TOKENS.get("BATCH_TOKEN")
+
+# Default model if not specified in args
+DEFAULT_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
+
 
 # ==============================================================================
 # 1. TENANTS
@@ -89,28 +116,28 @@ def build_tenants() -> List[Tenant]:
         # Priority 100 - Premium tier with 3 tenants for fairness testing
         Tenant(
             fairness_id="premium-tenant-a",
-            inference_objective="premium-traffic",
+            inference_objective="llm-premium",
             priority=100,
         ),
         Tenant(
             fairness_id="premium-tenant-b",
-            inference_objective="premium-traffic",
+            inference_objective="llm-premium",
             priority=100,
         ),
         Tenant(
             fairness_id="premium-tenant-c",
-            inference_objective="premium-traffic",
+            inference_objective="llm-premium",
             priority=100,
         ),
         # Priority 0 - Standard tier with 2 tenants for fairness testing
         Tenant(
             fairness_id="standard-tenant-a",
-            inference_objective="standard-traffic",
+            inference_objective="llm-standard",
             priority=0,
         ),
         Tenant(
             fairness_id="standard-tenant-b",
-            inference_objective="standard-traffic",
+            inference_objective="llm-standard",
             priority=0,
         ),
     ]
@@ -141,10 +168,24 @@ def _status_buckets(counts: dict):
     s_200 = counts.get("200", 0)
     s_429 = sum(c for k, c in counts.items() if "429" in str(k))
     s_503 = sum(c for k, c in counts.items() if "503" in str(k))
-    s_err = sum(
-        c for k, c in counts.items()
-        if "200" not in str(k) and "429" not in str(k) and "503" not in str(k)
-    )
+    # Count ALL errors: HTTP 4xx/5xx (excluding 429/503) AND client-side errors
+    # (Timeout, Error, Cancelled, etc.)
+    err_items = []
+    for k, c in counts.items():
+        k_str = str(k)
+        # HTTP error codes (4xx/5xx excluding 429/503)
+        is_http_error = (k_str[:1] in ('4', '5') and "429" not in k_str and "503" not in k_str)
+        # Client-side errors (connection failures, timeouts, cancellations)
+        is_client_error = any(k_str.startswith(prefix) for prefix in ["Error", "Timeout", "Cancelled"])
+
+        if is_http_error or is_client_error:
+            err_items.append((k, c))
+
+    # Log what we're counting as errors for debugging
+    if err_items:
+        print(f"[DEBUG] Counting as errors: {err_items}")
+
+    s_err = sum(c for k, c in err_items)
     return s_200, s_429, s_503, s_err
 
 
@@ -201,6 +242,8 @@ def window_stats(metrics: MetricsCollector, fid: str, window_sec: float, now: fl
         "s_429": s_429,
         "s_503": s_503,
         "s_err": s_err,
+        # Debug: include raw status counts
+        "_raw_status_counts": dict(metrics.status_counts[fid]),
     }
 
 
@@ -486,13 +529,7 @@ async def run_scenario_driver(control: dict, stop_event: asyncio.Event) -> None:
                         target_qps = eval_curve(curve, p)
                         rates[fid] = target_qps
 
-                        # For Test 2-4, update generator's external_rate
-                        if "test2_gen_premium" in control:
-                            if fid == "premium-tenant-a":
-                                control["test2_gen_premium"].external_rate = target_qps
-                            elif fid == "standard-tenant-a":
-                                control["test2_gen_standard"].external_rate = target_qps
-
+                        # For Test 3-4, update generator's external_rate (Test 2 doesn't use external_rate)
                         if "test3_gen_a" in control:
                             if fid == "premium-tenant-a":
                                 control["test3_gen_a"].external_rate = target_qps
@@ -630,6 +667,18 @@ async def handle_config(request: web.Request) -> web.Response:
         ],
         "epp_metrics": epp_metrics,
     })
+
+
+async def handle_debug_status_counts(request: web.Request) -> web.Response:
+    """Debug endpoint to show raw status_counts for all tenants."""
+    app = request.app
+    metrics: MetricsCollector = app["metrics"]
+
+    result = {}
+    for fid, counts in metrics.status_counts.items():
+        result[fid] = dict(counts)
+
+    return web.json_response(result)
 
 
 async def handle_stats(request: web.Request) -> web.Response:
@@ -825,10 +874,18 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
 
     # GPU Consolidation test uses shared traffic_generator.py
     if ("GPU Consolidation" in name or "Test 1" in name) and SHARED_GENERATOR_AVAILABLE:
+        # Stop any existing shared generators first
+        if "shared_generators" in app:
+            print("[Test 1] Stopping previous generators...")
+            for gen in app["shared_generators"]:
+                gen.stop()
+            app.pop("shared_generators", None)
+
         # Launch staged test using shared module
         ui_metrics = app["metrics"]
         metrics = MetricsAdapter(ui_metrics)  # Wrap UI metrics with adapter
         session: aiohttp.ClientSession = app["session"]
+        model_name = getattr(app["args"], "model", None) or DEFAULT_MODEL
 
         # Create shared generators for both tenants
         # Tenant A always hits qwen-a
@@ -850,10 +907,12 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             metrics=metrics,
             session=session,
             traffic_pattern="noisy_sinusoidal",  # 6-14 concurrency with variance, 20s period
-            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0  # No phase offset
+            phase_offset=0.0,  # No phase offset
+            auth_token=PREMIUM_TOKEN,
+            inference_objective="llm-premium"
         )
 
         # Tenant B - starts on qwen-b, then switches to qwen-a at 120s
@@ -865,10 +924,12 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             metrics=metrics,
             session=session,
             traffic_pattern="noisy_sinusoidal",  # 6-14 concurrency with variance, 20s period
-            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.35  # 126° offset to prevent wave overlap
+            phase_offset=0.35,  # 126° offset to prevent wave overlap
+            auth_token=PREMIUM_TOKEN,
+            inference_objective="llm-premium"
         )
 
         # Start BOTH tenants immediately:
@@ -936,39 +997,51 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
 
     # Test 2: Priority Differentiation - also use SharedRequestGenerator
     if ("Priority Differentiation" in name or "Test 2" in name) and SHARED_GENERATOR_AVAILABLE:
+        # Stop any existing shared generators first
+        if "shared_generators" in app:
+            print("[Test 2] Stopping previous generators...")
+            for gen in app["shared_generators"]:
+                gen.stop()
+            app.pop("shared_generators", None)
+
         ui_metrics = app["metrics"]
         metrics = MetricsAdapter(ui_metrics)
+        model_name = getattr(app["args"], "model", None) or DEFAULT_MODEL
         session: aiohttp.ClientSession = app["session"]
         endpoint = app["args"].url
 
-        # Premium tenant: noisy sine 20-30 (higher baseline for visibility)
+        # Premium tenant: noisy sinusoidal around 2 concurrent (lowered for small 7B model)
         gen_premium = SharedRequestGenerator(
             fairness_id="premium-tenant-a",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=25,
+            base_concurrency=2,  # 2 concurrent with noisy sinusoidal
             metrics=metrics,
             session=session,
-            traffic_pattern="noisy_sinusoidal",
-            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            traffic_pattern="noisy_sinusoidal",  # Noisy sinusoidal
+            model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0
+            phase_offset=0.0,
+            period_override=30.0,  # Smooth long waves
+            inference_objective="llm-premium"  # Priority 100
         )
 
-        # Standard tenant: massive spike pattern 15 → 200 (externally driven by scenario curve)
+        # Standard tenant: noisy sinusoidal, will spike from 1 → 3 → 5 → 6 concurrent
         gen_standard = SharedRequestGenerator(
             fairness_id="standard-tenant-a",
             endpoint=endpoint,
-            priority=50,
-            base_concurrency=15,  # Base, will be overridden by external_rate
+            priority=0,
+            base_concurrency=1,  # Start at 1 concurrent
             metrics=metrics,
             session=session,
-            traffic_pattern="concurrent",
-            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            traffic_pattern="noisy_sinusoidal",  # Noisy sinusoidal
+            model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0
+            phase_offset=0.0,
+            period_override=15.0,  # Shorter waves for more chop
+            inference_objective="llm-standard"  # Priority 0
         )
 
         # Store generators in control dict so scenario driver can update external_rate
@@ -985,19 +1058,47 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             for gen in [gen_premium, gen_standard]:
                 gen.stop()
 
+        # Add ramping logic for standard tenant - noisy sinusoidal with base_concurrency changes
+        # 1 → 3 → 5 → 6 → 1 concurrent
+        async def standard_spike_sequence():
+            import sys
+            print("[Test 2] Spike sequence started!", file=sys.stderr, flush=True)
+            await asyncio.sleep(15)  # Start baseline for 15s at 1 concurrent
+            print(f"[Test 2] T+15s: Standard ramping from 1 to 3 concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
+            gen_standard.base_concurrency = 3  # Ramp phase
+            print(f"[Test 2] Set base_concurrency to 3, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
+            await asyncio.sleep(10)
+            print(f"[Test 2] T+25s: Standard spiking to 5 concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
+            gen_standard.base_concurrency = 5  # Spike phase
+            print(f"[Test 2] Set base_concurrency to 5, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
+            await asyncio.sleep(10)
+            print(f"[Test 2] T+35s: Standard plateauing at 6 concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
+            gen_standard.base_concurrency = 6  # PLATEAU - lowered for small model
+            print(f"[Test 2] Set base_concurrency to 6, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
+            await asyncio.sleep(60)  # Hold plateau for 60s
+            print(f"[Test 2] T+95s: Standard dropping back to 1 concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
+            gen_standard.base_concurrency = 1  # Drop back to baseline
+            print(f"[Test 2] Set base_concurrency to 1, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
+            print("[Test 2] Spike sequence completed!", file=sys.stderr, flush=True)
+
+        spike_task = asyncio.create_task(standard_spike_sequence())
+        print(f"[Test 2] Created spike sequence task: {spike_task}", file=sys.stderr, flush=True)
         asyncio.create_task(auto_stop_test2())
         app["shared_generators"] = [gen_premium, gen_standard]
 
         curves = {
-            "premium-tenant-a": {"type": "sine", "base": 25, "amplitude": 5, "phase": 0, "period": 20},
-            "standard-tenant-a": {"type": "pulses", "base": 15, "period": 120, "pulses": [
-                {"at": 0, "dur": 15, "amp": 35},    # 0-15s: ramp to 50
-                {"at": 15, "dur": 10, "amp": 150},  # 15-25s: spike to 200
-                {"at": 25, "dur": 75, "amp": 185},  # 25-100s: sustained at 200
-                {"at": 100, "dur": 20, "amp": 0}    # 100-120s: taper to 15
-            ]},
+            # Premium: steady noisy sine around 3 req/s (lowered for small model)
+            "premium-tenant-a": {"type": "sine", "base": 3, "amplitude": 1, "phase": 0, "period": 30, "jitter": 0.15, "seed": 100},
+            # Standard: spike/plateau shape lowered for small model: 2→5→8→10→2 req/s
+            "standard-tenant-a": {"type": "pulses", "base": 2, "period": 120, "pulses": [
+                {"at": 0, "dur": 15, "amp": 0},      # 0-15s: baseline 2
+                {"at": 15, "dur": 10, "amp": 3},     # 15-25s: ramp to 5
+                {"at": 25, "dur": 10, "amp": 6},     # 25-35s: spike to 8
+                {"at": 35, "dur": 60, "amp": 8},     # 35-95s: PLATEAU at 10
+                {"at": 95, "dur": 25, "amp": 0}      # 95-120s: drop to 2
+            ], "jitter": 0.10, "seed": 200},
         }
-        # Force QPS mode for proper saturation detection with SharedRequestGenerator
+        # Force QPS mode
         control["mode"] = "qps"
         control["scenario"].update(
             playing=True,
@@ -1015,13 +1116,20 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
 
     # Test 3: Fairness Validation - three premium tenants with different patterns
     if ("Fairness Validation" in name or "Test 3" in name) and SHARED_GENERATOR_AVAILABLE:
+        # Stop any existing shared generators first
+        if "shared_generators" in app:
+            print("[Test 3] Stopping previous generators...")
+            for gen in app["shared_generators"]:
+                gen.stop()
+            app.pop("shared_generators", None)
+
         ui_metrics = app["metrics"]
+        model_name = getattr(app["args"], "model", None) or DEFAULT_MODEL
         metrics = MetricsAdapter(ui_metrics)
         session: aiohttp.ClientSession = app["session"]
         endpoint = app["args"].url
 
-        # Three tenants with vertically separated baselines for clarity
-        # Tenant A: HIGH baseline (15), will spike to 30 at 90s (externally driven)
+        # Tenant A: LOWEST baseline (15), will spike to 50 at 90s
         gen_a = SharedRequestGenerator(
             fairness_id="premium-tenant-a",
             endpoint=endpoint,
@@ -1030,39 +1138,44 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",
-            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0
+            phase_offset=0.0,
+            auth_token=PREMIUM_TOKEN,
+            inference_objective="llm-premium"
         )
 
-        # Tenant B: MIDDLE baseline (10), noisy sine
+        # Tenant B: MIDDLE baseline (25), noisy sine
         gen_b = SharedRequestGenerator(
             fairness_id="premium-tenant-b",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=10,
+            base_concurrency=25,
             metrics=metrics,
             session=session,
             traffic_pattern="noisy_sinusoidal",
-            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0
+            phase_offset=0.0,
+            auth_token=PREMIUM_TOKEN,
+            inference_objective="llm-premium"
         )
 
-        # Tenant C: LOW baseline (5), noisy sine, delayed start at 30s
+        # Tenant C: SLIGHTLY HIGHER than B (30), noisy sine, delayed start at 30s
         gen_c = SharedRequestGenerator(
             fairness_id="premium-tenant-c",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=5,
+            base_concurrency=30,
             metrics=metrics,
             session=session,
             traffic_pattern="noisy_sinusoidal",
-            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            model_name=model_name,
             input_tokens=100,
             output_tokens=100,
+            auth_token=PREMIUM_TOKEN,
             phase_offset=0.5
         )
 
@@ -1083,6 +1196,16 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
 
         asyncio.create_task(start_tenant_c_delayed())
 
+        # Tenant-A spike logic: spike from 15 to 50 at 90s
+        async def tenant_a_spike():
+            print("[Test 3] Waiting 90s for premium-tenant-a spike...")
+            await asyncio.sleep(90)
+            print("[Test 3] Spiking premium-tenant-a from 15 to 50")
+            gen_a.external_rate = 50
+            # Hold spike for 60s (until test end at 150s)
+
+        asyncio.create_task(tenant_a_spike())
+
         async def auto_stop_test3():
             await asyncio.sleep(150)
             print(f"[Test 3] Completed (150s), stopping...")
@@ -1093,13 +1216,16 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         asyncio.create_task(auto_stop_test3())
         app["shared_generators"] = [gen_a, gen_b, gen_c]
 
-        # Update curves to match UI - vertically separated for visibility
+        # Update curves to match UI - tenant-a lowest, tenant-c slightly higher than b
         curves = {
             "premium-tenant-a": {"type": "pulses", "base": 15, "period": 150, "pulses": [
-                {"at": 90, "dur": 60, "amp": 15}  # 90-150s: spike from 15 to 30
+                {"at": 0, "dur": 90, "amp": 0},     # 0-90s: stay at baseline 15
+                {"at": 90, "dur": 60, "amp": 35}    # 90-150s: spike from 15 to 50
             ]},
-            "premium-tenant-b": {"type": "sine", "base": 10, "amplitude": 2, "phase": 0, "period": 20, "jitter": 0.15, "seed": 202},
-            "premium-tenant-c": {"type": "sine", "base": 5, "amplitude": 2, "phase": 0.5, "period": 20, "jitter": 0.15, "seed": 303},
+            "premium-tenant-b": {"type": "sine", "base": 25, "amplitude": 3, "phase": 0, "period": 20, "jitter": 0.15, "seed": 202},
+            "premium-tenant-c": {"type": "pulses", "base": 0, "period": 150, "pulses": [
+                {"at": 30, "dur": 120, "amp": 30}   # 30-150s: baseline 30 (with sine modulation)
+            ], "amplitude": 3, "phase": 0.5, "jitter": 0.15, "seed": 303},
         }
         control["mode"] = "qps"
         control["scenario"].update(
@@ -1118,6 +1244,14 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
 
     # Test 4: Priority Inversion Prevention - standard flood then premium arrival
     if ("Priority Inversion" in name or "Test 4" in name) and SHARED_GENERATOR_AVAILABLE:
+        # Stop any existing shared generators first
+        if "shared_generators" in app:
+            print("[Test 4] Stopping previous generators...")
+            for gen in app["shared_generators"]:
+                gen.stop()
+            app.pop("shared_generators", None)
+
+        model_name = getattr(app["args"], "model", None) or DEFAULT_MODEL
         ui_metrics = app["metrics"]
         metrics = MetricsAdapter(ui_metrics)
         session: aiohttp.ClientSession = app["session"]
@@ -1127,15 +1261,17 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         gen_standard = SharedRequestGenerator(
             fairness_id="standard-tenant-a",
             endpoint=endpoint,
-            priority=50,
+            priority=0,
             base_concurrency=32,
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",
-            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0
+            phase_offset=0.0,
+            auth_token=STANDARD_TOKEN,
+            inference_objective="llm-standard"
         )
 
         # Premium tenant: starts at 30s with 8 concurrency
@@ -1147,10 +1283,12 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",
-            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0
+            phase_offset=0.0,
+            auth_token=PREMIUM_TOKEN,
+            inference_objective="llm-premium"
         )
 
         control["test4_gen_standard"] = gen_standard
@@ -1230,19 +1368,29 @@ async def handle_scenario_stop(request: web.Request) -> web.Response:
     for fid in control["rates"]:
         control["rates"][fid] = 0.0
 
-    # Stop shared generator tasks if running (GPU Consolidation test)
+    # Stop ALL shared generators regardless of test type
+    # 1. Stop generators stored in app["shared_generators"] list
     if "shared_generators" in app:
         for gen in app["shared_generators"]:
-            gen.stop()
-        # Cancel tasks
-        if "shared_gen_task_a" in app:
-            app["shared_gen_task_a"].cancel()
-        if "shared_gen_task_b" in app:
-            app["shared_gen_task_b"].cancel()
-        # Clean up
+            if hasattr(gen, 'stop'):
+                gen.stop()
         app.pop("shared_generators", None)
-        app.pop("shared_gen_task_a", None)
-        app.pop("shared_gen_task_b", None)
+
+    # 2. Stop generators stored in control dict (any key ending with _gen_)
+    gen_keys = [k for k in control.keys() if '_gen_' in k]
+    for key in gen_keys:
+        gen = control[key]
+        if hasattr(gen, 'stop'):
+            gen.stop()
+        control.pop(key, None)
+
+    # 3. Cancel ALL task keys that look like generator tasks
+    task_keys = [k for k in app.keys() if 'gen_task' in k or 'shared_gen' in k]
+    for key in task_keys:
+        task = app[key]
+        if hasattr(task, 'cancel'):
+            task.cancel()
+        app.pop(key, None)
 
     return web.json_response({"ok": True})
 
@@ -1701,7 +1849,7 @@ async def on_startup(app: web.Application) -> None:
         },
     }
 
-    connector = aiohttp.TCPConnector(limit=0)
+    connector = aiohttp.TCPConnector(limit=0, force_close=True)  # Force close connections to avoid stale connection errors
     session = aiohttp.ClientSession(connector=connector)
     generator = LoadGenerator(args, metrics, args.model, session)
 
@@ -1763,8 +1911,10 @@ def parse_args() -> argparse.Namespace:
         description="Flow Control Demo - Interactive Web UI",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    # For RHAII/gateway-based routing, use GATEWAY_URL to override with full path
-    if os.environ.get('GATEWAY_URL'):
+    # For RHAII/gateway-based routing, use URL to override with full path
+    if os.environ.get('URL'):
+        default_url = os.environ.get('URL')
+    elif os.environ.get('GATEWAY_URL'):
         default_url = os.environ.get('GATEWAY_URL')
     else:
         default_url = f"http://{os.environ.get('EPP_IP', 'localhost')}:80/v1/completions"
@@ -1798,6 +1948,7 @@ def main() -> None:
     app.router.add_post("/api/scenarios/delete", handle_scenarios_delete)
     app.router.add_post("/api/reset", handle_reset)
     app.router.add_post("/api/apply-preset", handle_apply_preset)
+    app.router.add_get("/api/debug/status-counts", handle_debug_status_counts)
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
 

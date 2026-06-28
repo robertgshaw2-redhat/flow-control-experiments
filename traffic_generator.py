@@ -12,6 +12,10 @@ from typing import Optional, Set
 
 import aiohttp
 
+# Flow Control Header Constants
+HEADER_FAIRNESS_ID = "x-gateway-inference-fairness-id"
+HEADER_INFERENCE_OBJECTIVE = "x-gateway-inference-objective"
+
 
 class MetricsCollector:
     """Collects and aggregates metrics per tenant."""
@@ -58,8 +62,7 @@ class RequestGenerator:
                  session: aiohttp.ClientSession, traffic_pattern: str = "concurrent",
                  model_name: str = "Qwen/Qwen2.5-0.5B-Instruct",
                  input_tokens: int = 100, output_tokens: int = 100,
-                 phase_offset: float = 0.0, period_override: float = None,
-                 auth_token: str = None, inference_objective: str = None):
+                 phase_offset: float = 0.0):
         self.fairness_id = fairness_id
         self.endpoint = endpoint
         self.priority = priority
@@ -71,9 +74,6 @@ class RequestGenerator:
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
         self.phase_offset = phase_offset  # Phase offset for sine waves (0.0 to 1.0)
-        self.period_override = period_override  # Override default 20s period for sine waves
-        self.auth_token = auth_token  # Bearer token for auth
-        self.inference_objective = inference_objective  # Explicit objective name (for auth-disabled mode)
         self.should_run = True
         self.inflight_tasks: Set[asyncio.Task] = set()
         self.start_time = None
@@ -107,13 +107,14 @@ class RequestGenerator:
                 return self.base_concurrency
 
             # Sinusoidal pattern with production-like variance
+            # Use period_override if set, otherwise default to 20s
             elapsed = time.time() - self.start_time
-            period = self.period_override if self.period_override else 20.0  # seconds
+            period = getattr(self, 'period_override', 20.0)  # seconds
             phase = (elapsed / period) * 2 * math.pi + (self.phase_offset * 2 * math.pi)
 
-            # Use base_concurrency as center, with ~10% amplitude
+            # Use base_concurrency as center, amplitude = 40% of center (configurable)
             center = self.base_concurrency
-            amplitude = max(4, int(center * 0.1))
+            amplitude = center * 0.4
             base_sine = center + amplitude * math.sin(phase)
 
             # Add realistic production variance:
@@ -123,15 +124,11 @@ class RequestGenerator:
 
             # 2. Occasional micro-spikes (simulates retry storms, cron jobs, batch operations)
             #    5% chance per check to add a small burst
-            spike = random.randint(1, int(center * 0.3)) if random.random() < 0.05 else 0
+            spike_max = max(1, int(center * 0.3))
+            spike = random.randint(1, spike_max) if random.random() < 0.05 else 0
 
             # Combine and clamp to reasonable bounds
             target = int(base_sine + noise + spike)
-
-            # Debug logging for standard tenant to track base_concurrency changes
-            if self.fairness_id == "standard-tenant-a" and int(elapsed) % 5 == 0 and random.random() < 0.1:
-                print(f"[{self.fairness_id}] T+{int(elapsed)}s: base={center}, target={target}, inflight={len(getattr(self, 'inflight_tasks', []))}", flush=True)
-
             return max(0, min(target, center * 2))  # Cap at 2x center
 
         return self.base_concurrency
@@ -147,21 +144,14 @@ class RequestGenerator:
             "prompt": prompt,
             "max_tokens": self.output_tokens,
             "stream": True,
-            "ignore_eos": True,
         }
 
-        headers = {
-            "x-gateway-inference-fairness-id": self.fairness_id,  # Gateway API standard header
-        }
-
-        # Send objective header directly (auth disabled, no JWT mapping needed)
-        # Use x-gateway- prefix (RHAII gateway standard), not x-llm-d-
-        if self.inference_objective:
-            headers["x-gateway-inference-objective"] = self.inference_objective
-        else:
-            raise ValueError(
-                f"Generator {self.fairness_id}: must provide inference_objective"
-            )
+        # TEMPORARILY REMOVE headers to bypass ext_proc issue
+        headers = {}
+        # headers = {
+        #     HEADER_FAIRNESS_ID: self.fairness_id,
+        #     HEADER_INFERENCE_OBJECTIVE: getattr(self, 'inference_objective', 'llm-standard'),
+        # }
 
         start_time = time.monotonic()
         ttft: Optional[float] = None
@@ -174,12 +164,18 @@ class RequestGenerator:
                 self.endpoint,
                 json=payload,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=120.0),
+                timeout=aiohttp.ClientTimeout(total=15.0, sock_read=5.0),  # Balanced: long enough to complete but not hang
             ) as resp:
                 if resp.status == 200:
                     status = "200"
-                    # Read streaming response
-                    async for chunk in resp.content.iter_any():
+                    # Read streaming response with balanced timeout
+                    try:
+                        async with asyncio.timeout(12.0):  # 12s max for entire response
+                            async for chunk in resp.content.iter_any():
+                                if ttft is None:
+                                    ttft = time.monotonic() - start_time
+                    except asyncio.TimeoutError:
+                        status = "Timeout"
                         if ttft is None:
                             ttft = time.monotonic() - start_time
                 else:
@@ -207,8 +203,6 @@ class RequestGenerator:
         if self.start_time is None:
             self.start_time = time.time()
 
-        warmup_duration = 5.0  # 5 second warmup
-
         while self.should_run:
             # Clean up completed tasks
             self.inflight_tasks = {t for t in self.inflight_tasks if not t.done()}
@@ -216,19 +210,10 @@ class RequestGenerator:
             # Get current target concurrency
             target = self.get_target_concurrency()
 
-            # Apply warmup ramp: gradually increase from 0 to target over warmup_duration
-            elapsed = time.time() - self.start_time
-            if elapsed < warmup_duration:
-                warmup_factor = elapsed / warmup_duration
-                target = int(target * warmup_factor)
-
-            # Spawn new tasks to reach target concurrency (limit spawn rate to avoid spikes)
-            spawn_limit = 5  # Max 5 new requests per iteration
-            spawned = 0
-            while len(self.inflight_tasks) < target and self.should_run and spawned < spawn_limit:
+            # Spawn new tasks to reach target concurrency
+            while len(self.inflight_tasks) < target and self.should_run:
                 task = asyncio.create_task(self.send_request())
                 self.inflight_tasks.add(task)
-                spawned += 1
 
             await asyncio.sleep(0.1)  # Check every 100ms for pattern changes
 

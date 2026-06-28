@@ -233,10 +233,10 @@ class LoadGenerator:
             "ignore_eos": True,
         }
 
-        # Apply the FlowKey headers (matching SharedRequestGenerator - Test 1 proven working)
+        # Apply the FlowKey headers (llm-d EPP format)
         headers = {
-            "x-fairness-id": tenant.fairness_id,
-            "x-inference-priority": str(tenant.priority),
+            "x-llm-d-inference-fairness-id": tenant.fairness_id,
+            "x-llm-d-inference-objective": tenant.inference_objective,
         }
 
         start_time = time.monotonic()
@@ -280,13 +280,19 @@ class LoadGenerator:
                                     except:
                                         pass
                 else:
-                    msg = (await resp.text()).lower()
+                    resp_text = await resp.text()
+                    msg = resp_text.lower()
                     if resp.status == 503 or "timed out" in msg:
                         status_str = "503 (TTL Evict)"
                     elif resp.status == 429 or "rejected" in msg:
                         status_str = "429 (Capacity Rej)"
                     else:
                         status_str = f"{resp.status}"
+                        # Debug: print 404 request details
+                        if resp.status == 404:
+                            print(f"\n[DEBUG 404] URL: {self.args.url}")
+                            print(f"[DEBUG 404] Payload: {payload}")
+                            print(f"[DEBUG 404] Response: {resp_text}")
 
         except asyncio.TimeoutError:
             status_str = "Timeout (Read)"
