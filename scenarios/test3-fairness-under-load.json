@@ -1,0 +1,22 @@
+{
+  "name": "Test 3: Fairness Under Load",
+  "period": 120.0,
+  "loop": false,
+  "curves": {
+    "premium-tenant-a": {
+      "objective": "llm-premium",
+      "priority": 100,
+      "points": [[0, 3], [120, 3]]
+    },
+    "premium-tenant-b": {
+      "objective": "llm-premium",
+      "priority": 100,
+      "points": [[0, 3], [120, 3]]
+    },
+    "standard-tenant-a": {
+      "objective": "llm-standard",
+      "priority": 0,
+      "points": [[0, 4], [120, 4]]
+    }
+  }
+}
