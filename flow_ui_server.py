@@ -1034,7 +1034,8 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             phase_offset=0.0
         )
         gen_premium.period_override = 30.0
-        gen_premium.inference_objective = "llm-premium-72b-a" if is_72b else "llm-premium"
+        gen_premium.auth_token = PREMIUM_TOKEN
+        gen_premium.inference_objective = "llm-premium"
 
         # Standard tenant: noisy sinusoidal, will spike
         gen_standard = SharedRequestGenerator(
@@ -1051,7 +1052,8 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             phase_offset=0.0
         )
         gen_standard.period_override = 15.0
-        gen_standard.inference_objective = "llm-standard-72b-a" if is_72b else "llm-standard"
+        gen_standard.auth_token = STANDARD_TOKEN
+        gen_standard.inference_objective = "llm-standard"
 
         # Store generators in control dict so scenario driver can update external_rate
         control["test2_gen_premium"] = gen_premium
