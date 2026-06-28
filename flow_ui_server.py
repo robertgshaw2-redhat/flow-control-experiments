@@ -49,7 +49,7 @@ from aiohttp import web
 
 # Import shared traffic generator if available
 try:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "gpu-consolidation-test"))
+    sys.path.insert(0, os.path.dirname(__file__))
     from traffic_generator import RequestGenerator as SharedRequestGenerator, HEADER_FAIRNESS_ID, HEADER_INFERENCE_OBJECTIVE
     SHARED_GENERATOR_AVAILABLE = True
 except ImportError:
