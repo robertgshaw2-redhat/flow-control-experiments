@@ -1,5 +1,5 @@
 {
-  "name": "Test 3: Fairness Under Load",
+  "name": "Test 3: Fairness Validation",
   "period": 120.0,
   "loop": false,
   "curves": {
