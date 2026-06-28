@@ -1511,35 +1511,38 @@ function buildPresets() {
     },
     {
       name: "Test 2: Priority Differentiation",
-      desc: "<b>Proves:</b> Flow control protects premium SLAs during overload. <b>What you'll see:</b> Premium latency stays &lt;2s while standard spikes 2-5s when flooded.",
+      desc: "<b>Proves:</b> Flow control protects premium SLAs during overload. <b>What you'll see:</b> Premium stays steady at ~2 concurrent with low latency while standard ramps 1→6 concurrent, causing standard latency to spike.",
       period: 120, loop: false, window: 120,
       phases: [
-        { until: 30, label: "Baseline" },
-        { until: 90, label: "Standard flood (premium stays fast)" },
-        { until: 120, label: "Return to baseline" }
+        { until: 15, label: "Baseline (premium 2, standard 1)" },
+        { until: 35, label: "Standard ramps to 6 (premium stays fast)" },
+        { until: 105, label: "Sustained load" },
+        { until: 120, label: "Standard drops back to 1" }
       ],
       curves: {
-        // Premium: steady noisy sine around 10 concurrency
-        "premium-tenant-a": { type: "sine", base: 10, amplitude: 3, phase: 0, period: 30, jitter: 0.15, seed: 100 },
+        // Premium: steady noisy sine around 2 concurrent
+        "premium-tenant-a": { type: "sine", base: 2, amplitude: 0.5, phase: 0, period: 30, jitter: 0.15, seed: 100 },
 
-        // Standard: spike/plateau pattern (noisy background)
-        "standard-tenant-a": { type: "pulses", base: 5, period: 120, pulses: [
-          { at: 0, dur: 15, amp: 0 },     // 0-15s: baseline 5
-          { at: 15, dur: 10, amp: 10 },   // 15-25s: ramp to 15
-          { at: 25, dur: 10, amp: 20 },   // 25-35s: spike to 25
-          { at: 35, dur: 60, amp: 25 },   // 35-95s: PLATEAU at 30
-          { at: 95, dur: 25, amp: 0 }     // 95-120s: drop to 5
+        // Standard: ramp 1→3→5→6, plateau, then drop to 1
+        "standard-tenant-a": { type: "pulses", base: 1, period: 120, pulses: [
+          { at: 0, dur: 15, amp: 0 },      // 0-15s: baseline 1
+          { at: 15, dur: 10, amp: 2 },     // 15-25s: ramp to 3
+          { at: 25, dur: 10, amp: 4 },     // 25-35s: ramp to 5
+          { at: 35, dur: 5, amp: 5 },      // 35-40s: reach 6
+          { at: 40, dur: 55, amp: 5 },     // 40-95s: plateau at 6
+          { at: 95, dur: 10, amp: -5 },    // 95-105s: drop to 1
+          { at: 105, dur: 15, amp: 0 }     // 105-120s: baseline 1
         ], jitter: 0.10, seed: 200 },
       },
     },
     {
       name: "Test 3: Fairness Validation",
-      desc: "<b>Proves:</b> Fair queueing prevents tenant monopolization. <b>What you'll see:</b> Tenant-a starts low (5), tenant-b at 10, tenant-c joins at 12. At 90s tenant-a spikes to 20 - all maintain similar P95 latency.",
+      desc: "<b>Proves:</b> Fair queueing prevents tenant monopolization. <b>What you'll see:</b> Three premium tenants (15, 25, 30 concurrent) share capacity fairly. At 90s tenant-a spikes 15→50, yet all three maintain similar P95 latency despite different load levels.",
       period: 150, loop: false, window: 150,
       phases: [
-        { until: 30, label: "Tenant-a (5) and tenant-b (10) start" },
-        { until: 90, label: "Tenant-c (12) joins at 30s" },
-        { until: 150, label: "Tenant-a spikes to 20 at 90s (fairness maintained)" }
+        { until: 30, label: "Tenant-a (15) and tenant-b (25) start" },
+        { until: 90, label: "Tenant-c (30) joins at 30s" },
+        { until: 150, label: "Tenant-a spikes to 50 at 90s (fairness maintained)" }
       ],
       curves: {
         // Tenant-a: LOWEST baseline (15), will spike to 50 at 90s

@@ -1010,39 +1010,43 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         session: aiohttp.ClientSession = app["session"]
         endpoint = app["args"].url
 
-        # Premium tenant: noisy sinusoidal around 2 concurrent (lowered for small 7B model)
+        # Detect which service we're testing (qwen72b-a vs qwen72b-b)
+        is_72b = "qwen72b-a" in endpoint
+        concurrency_multiplier = 10 if is_72b else 1  # 10x for 72B model
+
+        # Premium tenant: noisy sinusoidal
         gen_premium = SharedRequestGenerator(
             fairness_id="premium-tenant-a",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=2,  # 2 concurrent with noisy sinusoidal
+            base_concurrency=2 * concurrency_multiplier,  # 2 for 7B, 20 for 72B
             metrics=metrics,
             session=session,
-            traffic_pattern="noisy_sinusoidal",  # Noisy sinusoidal
+            traffic_pattern="noisy_sinusoidal",
             model_name=model_name,
             input_tokens=100,
             output_tokens=100,
             phase_offset=0.0
         )
         gen_premium.period_override = 30.0
-        gen_premium.inference_objective = "llm-premium"
+        gen_premium.inference_objective = "llm-premium-72b-a" if is_72b else "llm-premium"
 
-        # Standard tenant: noisy sinusoidal, will spike from 1 → 3 → 5 → 6 concurrent
+        # Standard tenant: noisy sinusoidal, will spike
         gen_standard = SharedRequestGenerator(
             fairness_id="standard-tenant-a",
             endpoint=endpoint,
             priority=0,
-            base_concurrency=1,  # Start at 1 concurrent
+            base_concurrency=1 * concurrency_multiplier,  # 1 for 7B, 10 for 72B
             metrics=metrics,
             session=session,
-            traffic_pattern="noisy_sinusoidal",  # Noisy sinusoidal
+            traffic_pattern="noisy_sinusoidal",
             model_name=model_name,
             input_tokens=100,
             output_tokens=100,
             phase_offset=0.0
         )
         gen_standard.period_override = 15.0
-        gen_standard.inference_objective = "llm-standard"
+        gen_standard.inference_objective = "llm-standard-72b-a" if is_72b else "llm-standard"
 
         # Store generators in control dict so scenario driver can update external_rate
         control["test2_gen_premium"] = gen_premium
@@ -1059,26 +1063,30 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
                 gen.stop()
 
         # Add ramping logic for standard tenant - noisy sinusoidal with base_concurrency changes
-        # 1 → 3 → 5 → 6 → 1 concurrent
+        # Scaled by concurrency_multiplier (1x for 7B, 10x for 72B)
         async def standard_spike_sequence():
             import sys
-            print("[Test 2] Spike sequence started!", file=sys.stderr, flush=True)
-            await asyncio.sleep(15)  # Start baseline for 15s at 1 concurrent
-            print(f"[Test 2] T+15s: Standard ramping from 1 to 3 concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
-            gen_standard.base_concurrency = 3  # Ramp phase
-            print(f"[Test 2] Set base_concurrency to 3, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
+            print(f"[Test 2] Spike sequence started! (multiplier={concurrency_multiplier})", file=sys.stderr, flush=True)
+            await asyncio.sleep(15)  # Start baseline for 15s
+            ramp_level = 3 * concurrency_multiplier
+            print(f"[Test 2] T+15s: Standard ramping to {ramp_level} concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
+            gen_standard.base_concurrency = ramp_level
+            print(f"[Test 2] Set base_concurrency to {ramp_level}, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
             await asyncio.sleep(10)
-            print(f"[Test 2] T+25s: Standard spiking to 5 concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
-            gen_standard.base_concurrency = 5  # Spike phase
-            print(f"[Test 2] Set base_concurrency to 5, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
+            spike_level = 5 * concurrency_multiplier
+            print(f"[Test 2] T+25s: Standard spiking to {spike_level} concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
+            gen_standard.base_concurrency = spike_level
+            print(f"[Test 2] Set base_concurrency to {spike_level}, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
             await asyncio.sleep(10)
-            print(f"[Test 2] T+35s: Standard plateauing at 6 concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
-            gen_standard.base_concurrency = 6  # PLATEAU - lowered for small model
-            print(f"[Test 2] Set base_concurrency to 6, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
+            plateau_level = 6 * concurrency_multiplier
+            print(f"[Test 2] T+35s: Standard plateauing at {plateau_level} concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
+            gen_standard.base_concurrency = plateau_level
+            print(f"[Test 2] Set base_concurrency to {plateau_level}, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
             await asyncio.sleep(60)  # Hold plateau for 60s
-            print(f"[Test 2] T+95s: Standard dropping back to 1 concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
-            gen_standard.base_concurrency = 1  # Drop back to baseline
-            print(f"[Test 2] Set base_concurrency to 1, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
+            baseline_level = 1 * concurrency_multiplier
+            print(f"[Test 2] T+95s: Standard dropping back to {baseline_level} concurrent (current: {gen_standard.base_concurrency})", file=sys.stderr, flush=True)
+            gen_standard.base_concurrency = baseline_level
+            print(f"[Test 2] Set base_concurrency to {baseline_level}, confirmed: {gen_standard.base_concurrency}", file=sys.stderr, flush=True)
             print("[Test 2] Spike sequence completed!", file=sys.stderr, flush=True)
 
         spike_task = asyncio.create_task(standard_spike_sequence())
