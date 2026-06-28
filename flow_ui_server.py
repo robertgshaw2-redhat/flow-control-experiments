@@ -1022,10 +1022,10 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0,
-            period_override=30.0,  # Smooth long waves
-            inference_objective="llm-premium"  # Priority 100
+            phase_offset=0.0
         )
+        gen_premium.period_override = 30.0
+        gen_premium.inference_objective = "llm-premium"
 
         # Standard tenant: noisy sinusoidal, will spike from 1 → 3 → 5 → 6 concurrent
         gen_standard = SharedRequestGenerator(
@@ -1039,10 +1039,10 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0,
-            period_override=15.0,  # Shorter waves for more chop
-            inference_objective="llm-standard"  # Priority 0
+            phase_offset=0.0
         )
+        gen_standard.period_override = 15.0
+        gen_standard.inference_objective = "llm-standard"
 
         # Store generators in control dict so scenario driver can update external_rate
         control["test2_gen_premium"] = gen_premium
