@@ -1274,12 +1274,12 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         endpoint = app["args"].url
         concurrency_multiplier = getattr(app["args"], "concurrency_multiplier", 1)
 
-        # Premium tenant: steady low production load (2 concurrent throughout)
+        # Premium tenant: steady low production load (1 concurrent throughout)
         gen_premium = SharedRequestGenerator(
             fairness_id="premium-tenant-a",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=2 * concurrency_multiplier,
+            base_concurrency=1 * concurrency_multiplier,
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",
@@ -1291,12 +1291,12 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         gen_premium.auth_token = PREMIUM_TOKEN
         gen_premium.inference_objective = "llm-premium"
 
-        # Standard tenant: steady production load (3 concurrent throughout)
+        # Standard tenant: steady production load (2 concurrent throughout)
         gen_standard = SharedRequestGenerator(
             fairness_id="standard-tenant-a",
             endpoint=endpoint,
             priority=0,
-            base_concurrency=3 * concurrency_multiplier,
+            base_concurrency=2 * concurrency_multiplier,
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",
@@ -1334,11 +1334,11 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         app["shared_gen_task_test4_standard"] = asyncio.create_task(gen_standard.run())
         app["shared_gen_task_test4_batch"] = asyncio.create_task(gen_batch.run())
 
-        # Batch ramp at 30s: 0→20 to force heavy saturation
+        # Batch ramp at 30s: 0→50 to saturate with low-priority traffic
         async def batch_ramp():
             await asyncio.sleep(30)
-            print(f"[Test 4] Ramping batch from 0 to {20 * concurrency_multiplier} at 30s")
-            gen_batch.external_rate = 20 * concurrency_multiplier
+            print(f"[Test 4] Ramping batch from 0 to {50 * concurrency_multiplier} at 30s")
+            gen_batch.external_rate = 50 * concurrency_multiplier
 
         asyncio.create_task(batch_ramp())
 
@@ -1353,10 +1353,10 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         app["shared_generators"] = [gen_premium, gen_standard, gen_batch]
 
         curves = {
-            "premium-tenant-a": {"type": "constant", "base": 2, "period": 90},
-            "standard-tenant-a": {"type": "constant", "base": 3, "period": 90},
+            "premium-tenant-a": {"type": "constant", "base": 1, "period": 90},
+            "standard-tenant-a": {"type": "constant", "base": 2, "period": 90},
             "batch-tenant-a": {"type": "pulses", "base": 0, "period": 90, "pulses": [
-                {"at": 30, "dur": 60, "amp": 20}    # Ramps to 20 at 30s, stays until 90s
+                {"at": 30, "dur": 60, "amp": 50}    # Ramps to 50 at 30s, stays until 90s
             ]},
         }
         control["mode"] = "qps"

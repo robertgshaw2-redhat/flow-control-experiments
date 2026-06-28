@@ -1562,22 +1562,22 @@ function buildPresets() {
     },
     {
       name: "Test 4: Priority Inversion Prevention",
-      desc: "<b>Proves:</b> Batch workloads can't starve premium/standard interactive traffic. <b>What you'll see:</b> Premium (2) and standard (3) run steady production load. At 30s batch ramps to 20, heavily saturating capacity. Premium TTFT stays <1s while batch queues deeply.",
+      desc: "<b>Proves:</b> Batch workloads can't starve premium/standard interactive traffic. <b>What you'll see:</b> Premium (1) and standard (2) run steady at baseline TTFT. At 30s batch ramps to 50. Premium/standard stay low TTFT while batch TTFT grows (queuing).",
       period: 90, loop: false, window: 90,
       phases: [
-        { until: 30, label: "Baseline (premium 2, standard 3, batch 0)" },
-        { until: 90, label: "Batch flood (20) - premium stays fast" }
+        { until: 30, label: "Baseline (premium 1, standard 2, batch 0)" },
+        { until: 90, label: "Batch flood (50) - premium/standard stay fast, batch queues" }
       ],
       curves: {
-        // Premium: steady low production load throughout
-        "premium-tenant-a": { type: "constant", base: 2, period: 90 },
+        // Premium: very low steady load - should never queue
+        "premium-tenant-a": { type: "constant", base: 1, period: 90 },
 
-        // Standard: steady production load throughout
-        "standard-tenant-a": { type: "constant", base: 3, period: 90 },
+        // Standard: low steady load - should stay at baseline TTFT
+        "standard-tenant-a": { type: "constant", base: 2, period: 90 },
 
-        // Batch: 0 baseline, ramps to 20 at 30s to heavily saturate capacity
+        // Batch: 0 baseline, ramps to 50 at 30s - this should queue
         "batch-tenant-a": { type: "pulses", base: 0, period: 90, pulses: [
-          { at: 30, dur: 60, amp: 20 }    // 30-90s: heavy saturation with batch (pri -10)
+          { at: 30, dur: 60, amp: 50 }    // 30-90s: batch saturates, gets deprioritized
         ]},
       },
     },
