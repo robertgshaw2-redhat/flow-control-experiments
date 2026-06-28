@@ -1143,13 +1143,14 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         metrics = MetricsAdapter(ui_metrics)
         session: aiohttp.ClientSession = app["session"]
         endpoint = app["args"].url
+        concurrency_multiplier = getattr(app["args"], "concurrency_multiplier", 1)
 
         # Tenant A: LOWEST baseline (15), will spike to 50 at 90s
         gen_a = SharedRequestGenerator(
             fairness_id="premium-tenant-a",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=15,
+            base_concurrency=15 * concurrency_multiplier,
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",
@@ -1166,7 +1167,7 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             fairness_id="premium-tenant-b",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=25,
+            base_concurrency=25 * concurrency_multiplier,
             metrics=metrics,
             session=session,
             traffic_pattern="noisy_sinusoidal",
@@ -1183,7 +1184,7 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             fairness_id="premium-tenant-c",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=30,
+            base_concurrency=30 * concurrency_multiplier,
             metrics=metrics,
             session=session,
             traffic_pattern="noisy_sinusoidal",
@@ -1215,8 +1216,8 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         async def tenant_a_spike():
             print("[Test 3] Waiting 90s for premium-tenant-a spike...")
             await asyncio.sleep(90)
-            print("[Test 3] Spiking premium-tenant-a from 15 to 50")
-            gen_a.external_rate = 50
+            print(f"[Test 3] Spiking premium-tenant-a from {15 * concurrency_multiplier} to {50 * concurrency_multiplier}")
+            gen_a.external_rate = 50 * concurrency_multiplier
             # Hold spike for 60s (until test end at 150s)
 
         asyncio.create_task(tenant_a_spike())
@@ -1271,13 +1272,14 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         metrics = MetricsAdapter(ui_metrics)
         session: aiohttp.ClientSession = app["session"]
         endpoint = app["args"].url
+        concurrency_multiplier = getattr(app["args"], "concurrency_multiplier", 1)
 
         # Premium tenant: steady low production load (2 concurrent throughout)
         gen_premium = SharedRequestGenerator(
             fairness_id="premium-tenant-a",
             endpoint=endpoint,
             priority=100,
-            base_concurrency=2,
+            base_concurrency=2 * concurrency_multiplier,
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",
@@ -1294,7 +1296,7 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             fairness_id="standard-tenant-a",
             endpoint=endpoint,
             priority=0,
-            base_concurrency=3,
+            base_concurrency=3 * concurrency_multiplier,
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",
@@ -1335,8 +1337,8 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         # Batch ramp at 30s: 0→20 to force heavy saturation
         async def batch_ramp():
             await asyncio.sleep(30)
-            print("[Test 4] Ramping batch from 0 to 20 at 30s")
-            gen_batch.external_rate = 20
+            print(f"[Test 4] Ramping batch from 0 to {20 * concurrency_multiplier} at 30s")
+            gen_batch.external_rate = 20 * concurrency_multiplier
 
         asyncio.create_task(batch_ramp())
 
