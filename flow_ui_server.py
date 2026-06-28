@@ -140,6 +140,12 @@ def build_tenants() -> List[Tenant]:
             inference_objective="llm-standard",
             priority=0,
         ),
+        # Priority -10 - Batch tier
+        Tenant(
+            fairness_id="batch-tenant-a",
+            inference_objective="llm-batch",
+            priority=-10,
+        ),
     ]
 
 
