@@ -1849,14 +1849,11 @@ async def on_startup(app: web.Application) -> None:
         },
     }
 
-    # Create SSL context to accept self-signed certs for HTTPS endpoints
-    import ssl
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
+    # Use curl user-agent to bypass ext_proc rejection of Python/aiohttp
+    default_headers = {"User-Agent": "curl/8.4.0"}
 
-    connector = aiohttp.TCPConnector(limit=0, force_close=True, ssl=ssl_context)  # Force close + SSL for HTTPS
-    session = aiohttp.ClientSession(connector=connector)
+    connector = aiohttp.TCPConnector(limit=0, force_close=True)
+    session = aiohttp.ClientSession(connector=connector, headers=default_headers)
     generator = LoadGenerator(args, metrics, args.model, session)
 
     # Best-effort connectivity probe -- warn but keep serving so the UI can come
