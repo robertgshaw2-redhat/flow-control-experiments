@@ -71,9 +71,9 @@ class MetricsAdapter:
 
     def record_end(self, tenant_id: str, status: str, ttft: float, duration: float):
         """Record completed request in UI metrics."""
-        # UI metrics expects: fairness_id, status (string), ttft, duration
+        # UI metrics expects: fairness_id, status (string), ttft, duration, output_tokens
         print(f"[MetricsAdapter] Recording: tenant={tenant_id}, status={status}, ttft={ttft}, duration={duration}", flush=True)
-        self.ui_metrics.record(tenant_id, status, ttft, duration)
+        self.ui_metrics.record(tenant_id, status, ttft, duration, output_tokens=0)
 
 # Reuse the load-generation engine and metrics from the CLI demo verbatim so the
 # two tools drive traffic identically.
