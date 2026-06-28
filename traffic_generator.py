@@ -146,12 +146,12 @@ class RequestGenerator:
             "stream": True,
         }
 
-        # TEMPORARILY REMOVE headers to bypass ext_proc issue
-        headers = {}
-        # headers = {
-        #     HEADER_FAIRNESS_ID: self.fairness_id,
-        #     HEADER_INFERENCE_OBJECTIVE: getattr(self, 'inference_objective', 'llm-standard'),
-        # }
+        # Use curl user-agent to bypass ext_proc rejection of Python/aiohttp
+        headers = {
+            "User-Agent": "curl/8.4.0",
+            HEADER_FAIRNESS_ID: self.fairness_id,
+            HEADER_INFERENCE_OBJECTIVE: getattr(self, 'inference_objective', 'llm-standard'),
+        }
 
         start_time = time.monotonic()
         ttft: Optional[float] = None

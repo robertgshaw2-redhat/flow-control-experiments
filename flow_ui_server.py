@@ -1849,7 +1849,13 @@ async def on_startup(app: web.Application) -> None:
         },
     }
 
-    connector = aiohttp.TCPConnector(limit=0, force_close=True)  # Force close connections to avoid stale connection errors
+    # Create SSL context to accept self-signed certs for HTTPS endpoints
+    import ssl
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+
+    connector = aiohttp.TCPConnector(limit=0, force_close=True, ssl=ssl_context)  # Force close + SSL for HTTPS
     session = aiohttp.ClientSession(connector=connector)
     generator = LoadGenerator(args, metrics, args.model, session)
 
