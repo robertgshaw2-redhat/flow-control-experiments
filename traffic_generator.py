@@ -211,9 +211,11 @@ class RequestGenerator:
             target = self.get_target_concurrency()
 
             # Spawn new tasks to reach target concurrency
+            # Add small delay between spawns to avoid ext_proc connection issues
             while len(self.inflight_tasks) < target and self.should_run:
                 task = asyncio.create_task(self.send_request())
                 self.inflight_tasks.add(task)
+                await asyncio.sleep(0.05)  # 50ms delay between spawns to prevent burst
 
             await asyncio.sleep(0.1)  # Check every 100ms for pattern changes
 
