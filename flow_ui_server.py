@@ -910,10 +910,10 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0,  # No phase offset
-            auth_token=PREMIUM_TOKEN,
-            inference_objective="llm-premium"
+            phase_offset=0.0  # No phase offset
         )
+        gen_a.auth_token = PREMIUM_TOKEN
+        gen_a.inference_objective = "llm-premium"
 
         # Tenant B - starts on qwen-b, then switches to qwen-a at 120s
         gen_b = SharedRequestGenerator(
@@ -927,10 +927,10 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.35,  # 126° offset to prevent wave overlap
-            auth_token=PREMIUM_TOKEN,
-            inference_objective="llm-premium"
+            phase_offset=0.35  # 126° offset to prevent wave overlap
         )
+        gen_b.auth_token = PREMIUM_TOKEN
+        gen_b.inference_objective = "llm-premium"
 
         # Start BOTH tenants immediately:
         # - Tenant A on qwen-a
@@ -1141,10 +1141,10 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0,
-            auth_token=PREMIUM_TOKEN,
-            inference_objective="llm-premium"
+            phase_offset=0.0
         )
+        gen_a.auth_token = PREMIUM_TOKEN
+        gen_a.inference_objective = "llm-premium"
 
         # Tenant B: MIDDLE baseline (25), noisy sine
         gen_b = SharedRequestGenerator(
@@ -1158,10 +1158,10 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0,
-            auth_token=PREMIUM_TOKEN,
-            inference_objective="llm-premium"
+            phase_offset=0.0
         )
+        gen_b.auth_token = PREMIUM_TOKEN
+        gen_b.inference_objective = "llm-premium"
 
         # Tenant C: SLIGHTLY HIGHER than B (30), noisy sine, delayed start at 30s
         gen_c = SharedRequestGenerator(
@@ -1175,9 +1175,9 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            auth_token=PREMIUM_TOKEN,
             phase_offset=0.5
         )
+        gen_c.auth_token = PREMIUM_TOKEN
 
         control["test3_gen_a"] = gen_a
         control["test3_gen_b"] = gen_b
@@ -1269,10 +1269,10 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0,
-            auth_token=STANDARD_TOKEN,
-            inference_objective="llm-standard"
+            phase_offset=0.0
         )
+        gen_standard.auth_token = STANDARD_TOKEN
+        gen_standard.inference_objective = "llm-standard"
 
         # Premium tenant: starts at 30s with 8 concurrency
         gen_premium = SharedRequestGenerator(
@@ -1286,10 +1286,10 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             model_name=model_name,
             input_tokens=100,
             output_tokens=100,
-            phase_offset=0.0,
-            auth_token=PREMIUM_TOKEN,
-            inference_objective="llm-premium"
+            phase_offset=0.0
         )
+        gen_premium.auth_token = PREMIUM_TOKEN
+        gen_premium.inference_objective = "llm-premium"
 
         control["test4_gen_standard"] = gen_standard
         control["test4_gen_premium"] = gen_premium
