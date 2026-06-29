@@ -16,7 +16,7 @@
     "batch-tenant-a": {
       "objective": "llm-batch",
       "priority": -10,
-      "points": [[0, 0], [30, 0], [35, 10], [90, 10]]
+      "points": [[0, 0], [30, 0], [35, 15], [90, 15]]
     }
   }
 }
