@@ -1562,11 +1562,11 @@ function buildPresets() {
     },
     {
       name: "Test 4: Priority Inversion Prevention",
-      desc: "<b>Proves:</b> Batch workloads can't starve premium/standard interactive traffic. <b>What you'll see:</b> Premium (1) and standard (2) run steady at baseline TTFT. At 30s batch ramps to 50. Premium/standard stay low TTFT while batch TTFT grows (queuing).",
+      desc: "<b>Proves:</b> Batch workloads can't starve premium/standard interactive traffic. <b>What you'll see:</b> Premium (1) and standard (2) run steady at baseline TTFT. At 30s batch ramps to 10. Premium/standard maintain low TTFT while batch TTFT grows (queuing).",
       period: 90, loop: false, window: 90,
       phases: [
         { until: 30, label: "Baseline (premium 1, standard 2, batch 0)" },
-        { until: 90, label: "Batch flood (50) - premium/standard stay fast, batch queues" }
+        { until: 90, label: "Batch adds load (10) - premium/standard stay fast, batch queues" }
       ],
       curves: {
         // Premium: very low steady load - should never queue
@@ -1575,9 +1575,9 @@ function buildPresets() {
         // Standard: low steady load - should stay at baseline TTFT
         "standard-tenant-a": { type: "constant", base: 2, period: 90 },
 
-        // Batch: 0 baseline, ramps to 50 at 30s - this should queue
+        // Batch: 0 baseline, ramps to 10 at 30s - should queue while premium/standard don't
         "batch-tenant-a": { type: "pulses", base: 0, period: 90, pulses: [
-          { at: 30, dur: 60, amp: 50 }    // 30-90s: batch saturates, gets deprioritized
+          { at: 30, dur: 60, amp: 10 }    // 30-90s: batch adds load, gets deprioritized
         ]},
       },
     },
