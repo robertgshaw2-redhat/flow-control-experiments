@@ -1334,11 +1334,11 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
         app["shared_gen_task_test4_standard"] = asyncio.create_task(gen_standard.run())
         app["shared_gen_task_test4_batch"] = asyncio.create_task(gen_batch.run())
 
-        # Batch ramp at 30s: 0→15 to add low-priority load
+        # Batch ramp at 30s: 0→10 to add low-priority load
         async def batch_ramp():
             await asyncio.sleep(30)
-            print(f"[Test 4] Ramping batch from 0 to {15 * concurrency_multiplier} at 30s")
-            gen_batch.external_rate = 15 * concurrency_multiplier
+            print(f"[Test 4] Ramping batch from 0 to {10 * concurrency_multiplier} at 30s")
+            gen_batch.external_rate = 10 * concurrency_multiplier
 
         asyncio.create_task(batch_ramp())
 
@@ -1356,7 +1356,7 @@ async def handle_scenario_start(request: web.Request) -> web.Response:
             "premium-tenant-a": {"type": "constant", "base": 1, "period": 90},
             "standard-tenant-a": {"type": "constant", "base": 2, "period": 90},
             "batch-tenant-a": {"type": "pulses", "base": 0, "period": 90, "pulses": [
-                {"at": 30, "dur": 60, "amp": 15}    # Ramps to 15 at 30s, stays until 90s
+                {"at": 30, "dur": 60, "amp": 10}    # Ramps to 10 at 30s, stays until 90s
             ]},
         }
         control["mode"] = "qps"
