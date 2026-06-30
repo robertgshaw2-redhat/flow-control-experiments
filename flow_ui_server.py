@@ -1964,7 +1964,7 @@ def parse_args() -> argparse.Namespace:
         default_url = os.environ.get('GATEWAY_URL')
     else:
         default_url = f"http://{os.environ.get('EPP_IP', 'localhost')}:80/v1/completions"
-    parser.add_argument("--url", default=default_url, help="Target gateway completions endpoint.")
+    parser.add_argument("--gateway-url", "--url", dest="url", default=default_url, help="Target gateway URL (base URL or full completions endpoint path).")
     parser.add_argument("--capacity", type=int, default=16, help="Deployment concurrency capacity (for the saturation banner).")
     parser.add_argument("--model", default=os.environ.get("MODEL_NAME", "default"), help="Model / InferenceObjective name sent in the payload.")
     parser.add_argument("--host", default="0.0.0.0", help="Web UI bind host.")

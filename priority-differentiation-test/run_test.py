@@ -38,15 +38,6 @@ from traffic_generator import MetricsCollector, RequestGenerator
 # CONFIGURATION
 # ==============================================================================
 
-# Default gateway URL (can override with --gateway-url)
-DEFAULT_GATEWAY = "http://aefc7e10f44604760a801dfb2c34b36b-64674702.us-west-2.elb.amazonaws.com"
-
-# Endpoint - using qwen32b-a for all tenants
-ENDPOINT = f"{DEFAULT_GATEWAY}/llm-test/qwen32b-a/v1/completions"
-
-# Model name
-MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
-
 # Request configuration
 INPUT_TOKENS = 100
 OUTPUT_TOKENS = 100
@@ -61,7 +52,8 @@ class TenantConfig:
     """Configuration for a single tenant."""
     fairness_id: str
     priority: int
-    objective: str
+    objective: str  # Human-readable description
+    inference_objective: str  # InferenceObjective name (llm-premium, llm-standard, llm-batch)
     endpoint: str
     base_concurrency: int
     phase_configs: List[dict]  # List of {start_time, duration, concurrency}
@@ -220,10 +212,13 @@ async def run_test(args: argparse.Namespace):
     """Run the priority differentiation test."""
     duration = args.duration
 
-    # Override gateway URL if provided
-    endpoint = ENDPOINT
-    if args.gateway_url:
-        endpoint = args.gateway_url
+    # Gateway URL is required
+    if not args.gateway_url:
+        raise ValueError("--gateway-url is required")
+    endpoint = args.gateway_url
+
+    # Scale concurrency with multiplier (use for large models like 72B)
+    mult = args.concurrency_multiplier
 
     # Test 2 configuration: 3 premium + 2 standard tenants
     # Premium: 8 conc baseline → 16 at 60s → 8 at 90s (distributed across 3 tenants)
@@ -234,62 +229,67 @@ async def run_test(args: argparse.Namespace):
         TenantConfig(
             fairness_id="premium-tenant-a",
             priority=100,
+            inference_objective=args.premium_objective,
             objective="P95 TTFT < 2s",
             endpoint=endpoint,
-            base_concurrency=3,  # ~2.7 rounded up
+            base_concurrency=3 * mult,  # ~2.7 rounded up
             phase_configs=[
-                {"start_time": 0, "duration": 60, "concurrency": 3},     # 0-60s: 2.7
-                {"start_time": 60, "duration": 30, "concurrency": 6},    # 60-90s: 5.3
-                {"start_time": 90, "duration": 30, "concurrency": 3},    # 90-120s: 2.7
+                {"start_time": 0, "duration": 60, "concurrency": 3 * mult},     # 0-60s: 2.7
+                {"start_time": 60, "duration": 30, "concurrency": 6 * mult},    # 60-90s: 5.3
+                {"start_time": 90, "duration": 30, "concurrency": 3 * mult},    # 90-120s: 2.7
             ]
         ),
         TenantConfig(
             fairness_id="premium-tenant-b",
             priority=100,
+            inference_objective=args.premium_objective,
             objective="P95 TTFT < 2s",
             endpoint=endpoint,
-            base_concurrency=3,
+            base_concurrency=3 * mult,
             phase_configs=[
-                {"start_time": 0, "duration": 60, "concurrency": 3},
-                {"start_time": 60, "duration": 30, "concurrency": 5},
-                {"start_time": 90, "duration": 30, "concurrency": 3},
+                {"start_time": 0, "duration": 60, "concurrency": 3 * mult},
+                {"start_time": 60, "duration": 30, "concurrency": 5 * mult},
+                {"start_time": 90, "duration": 30, "concurrency": 3 * mult},
             ]
         ),
         TenantConfig(
             fairness_id="premium-tenant-c",
             priority=100,
+            inference_objective=args.premium_objective,
             objective="P95 TTFT < 2s",
             endpoint=endpoint,
-            base_concurrency=2,  # ~2.6 rounded down
+            base_concurrency=2 * mult,  # ~2.6 rounded down
             phase_configs=[
-                {"start_time": 0, "duration": 60, "concurrency": 2},
-                {"start_time": 60, "duration": 30, "concurrency": 5},
-                {"start_time": 90, "duration": 30, "concurrency": 2},
+                {"start_time": 0, "duration": 60, "concurrency": 2 * mult},
+                {"start_time": 60, "duration": 30, "concurrency": 5 * mult},
+                {"start_time": 90, "duration": 30, "concurrency": 2 * mult},
             ]
         ),
         # Standard tenants (priority 0) - split 8 conc → 32 → 8
         TenantConfig(
             fairness_id="standard-tenant-a",
             priority=0,
+            inference_objective=args.standard_objective,
             objective="Best effort",
             endpoint=endpoint,
-            base_concurrency=4,
+            base_concurrency=4 * mult,
             phase_configs=[
-                {"start_time": 0, "duration": 30, "concurrency": 4},    # 0-30s: baseline
-                {"start_time": 30, "duration": 60, "concurrency": 16},  # 30-90s: flood
-                {"start_time": 90, "duration": 30, "concurrency": 4},   # 90-120s: baseline
+                {"start_time": 0, "duration": 30, "concurrency": 4 * mult},    # 0-30s: baseline
+                {"start_time": 30, "duration": 60, "concurrency": 16 * mult},  # 30-90s: flood
+                {"start_time": 90, "duration": 30, "concurrency": 4 * mult},   # 90-120s: baseline
             ]
         ),
         TenantConfig(
             fairness_id="standard-tenant-b",
             priority=0,
+            inference_objective=args.standard_objective,
             objective="Best effort",
             endpoint=endpoint,
-            base_concurrency=4,
+            base_concurrency=4 * mult,
             phase_configs=[
-                {"start_time": 0, "duration": 30, "concurrency": 4},
-                {"start_time": 30, "duration": 60, "concurrency": 16},
-                {"start_time": 90, "duration": 30, "concurrency": 4},
+                {"start_time": 0, "duration": 30, "concurrency": 4 * mult},
+                {"start_time": 30, "duration": 60, "concurrency": 16 * mult},
+                {"start_time": 90, "duration": 30, "concurrency": 4 * mult},
             ]
         ),
     ]
@@ -325,10 +325,12 @@ async def run_test(args: argparse.Namespace):
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",  # Use fixed concurrent pattern
-            model_name=MODEL_NAME,
+            model_name=args.model_name,
             input_tokens=INPUT_TOKENS,
             output_tokens=OUTPUT_TOKENS
         )
+        # Set inference_objective from tenant config for flow control headers
+        gen.inference_objective = t.inference_objective
         controller = DynamicConcurrencyController(gen, t.phase_configs)
         generators.append(gen)
         controllers.append(controller)
@@ -410,8 +412,33 @@ def parse_args():
 
     parser.add_argument(
         "--gateway-url",
-        default=None,
-        help="Override gateway URL (default: AWS ELB + /llm-test/qwen32b-a/v1/completions)"
+        required=True,
+        help="Full gateway endpoint URL (e.g., http://gateway/llm-test/model-name/v1/completions)"
+    )
+
+    parser.add_argument(
+        "--model-name",
+        required=True,
+        help="Model name to send in request payload (required)"
+    )
+
+    parser.add_argument(
+        "--concurrency-multiplier",
+        type=int,
+        default=1,
+        help="Multiplier for test concurrency levels (use 10+ for large models like 72B with low capacity)"
+    )
+
+    parser.add_argument(
+        "--premium-objective",
+        default="llm-premium",
+        help="InferenceObjective name for premium tier"
+    )
+
+    parser.add_argument(
+        "--standard-objective",
+        default="llm-standard",
+        help="InferenceObjective name for standard tier"
     )
 
     return parser.parse_args()

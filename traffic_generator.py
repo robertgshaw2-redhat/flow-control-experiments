@@ -153,6 +153,16 @@ class RequestGenerator:
             HEADER_INFERENCE_OBJECTIVE: getattr(self, 'inference_objective', 'llm-standard'),
         }
 
+        # Debug logging (only log first request from each tenant)
+        if not hasattr(self, '_logged_request'):
+            import sys
+            print(f"[{self.fairness_id}] Sending request:", file=sys.stderr)
+            print(f"  Endpoint: {self.endpoint}", file=sys.stderr)
+            print(f"  Headers: {headers}", file=sys.stderr)
+            print(f"  Payload model: {payload['model']}", file=sys.stderr)
+            print(f"  Priority: {self.priority}", file=sys.stderr)
+            self._logged_request = True
+
         # Add auth token if configured (required for priority-based routing)
         auth_token = getattr(self, 'auth_token', None)
         if auth_token:

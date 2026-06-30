@@ -12,7 +12,7 @@ import asyncio
 import aiohttp
 import time
 
-GATEWAY = "http://aefc7e10f44604760a801dfb2c34b36b-64674702.us-west-2.elb.amazonaws.com"
+GATEWAY = "GATEWAY_URL_REQUIRED"
 ENDPOINT = f"{GATEWAY}/llm-test/qwen32b-a/v1/completions"
 
 async def send_test_request(session, fairness_id, priority, color):

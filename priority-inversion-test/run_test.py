@@ -18,7 +18,7 @@ Expected outcome:
 
 Usage:
     python3 run_test.py --duration 90
-    python3 run_test.py --duration 90 --gateway-url http://custom-gateway/llm-test/qwen32b-a/v1/completions
+    python3 run_test.py --duration 90 --gateway-url http://gateway/llm-test/model-name/v1/completions
 """
 
 import argparse
@@ -38,13 +38,11 @@ from traffic_generator import MetricsCollector, RequestGenerator
 # ==============================================================================
 
 # Default gateway URL (can override with --gateway-url)
-DEFAULT_GATEWAY = "http://aefc7e10f44604760a801dfb2c34b36b-64674702.us-west-2.elb.amazonaws.com"
 
 # Endpoint - using qwen32b-a for all tenants
-ENDPOINT = f"{DEFAULT_GATEWAY}/llm-test/qwen32b-a/v1/completions"
+# ENDPOINT is now passed directly via --gateway-url (full endpoint path)
 
 # Model name
-MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 
 # Request configuration
 INPUT_TOKENS = 100
@@ -220,9 +218,9 @@ async def run_test(args: argparse.Namespace):
     duration = args.duration
 
     # Override gateway URL if provided
-    endpoint = ENDPOINT
-    if args.gateway_url:
-        endpoint = args.gateway_url
+    if not args.gateway_url:
+        raise ValueError("--gateway-url is required")
+    endpoint = args.gateway_url
 
     # Test 4 configuration: 3 premium + 2 standard tenants
     # Phase 1 (0-60s): Flood with 50 standard requests (25 each tenant)
@@ -323,10 +321,18 @@ async def run_test(args: argparse.Namespace):
             metrics=metrics,
             session=session,
             traffic_pattern="concurrent",
-            model_name=MODEL_NAME,
+            model_name=args.model_name,
             input_tokens=INPUT_TOKENS,
             output_tokens=OUTPUT_TOKENS
         )
+        # Map priority to inference objective for flow control headers
+        if t.priority == 100:
+            gen.inference_objective = "llm-premium"
+        elif t.priority == -10:
+            gen.inference_objective = "llm-batch"
+        else:
+            gen.inference_objective = "llm-standard"
+
         controller = DynamicConcurrencyController(gen, t.phase_configs)
         generators.append(gen)
         controllers.append(controller)
@@ -408,7 +414,14 @@ def parse_args():
     parser.add_argument(
         "--gateway-url",
         default=None,
-        help="Override gateway URL (default: AWS ELB + /llm-test/qwen32b-a/v1/completions)"
+        help="Full gateway endpoint URL (e.g., http://gateway/llm-test/model-name/v1/completions)"
+    )
+
+
+    parser.add_argument(
+        "--model-name",
+        required=True,
+        help="Model name to send in request payload (required)"
     )
 
     return parser.parse_args()

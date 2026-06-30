@@ -15,7 +15,7 @@ import json
 from collections import defaultdict
 from typing import Dict, List
 
-ENDPOINT = "http://aefc7e10f44604760a801dfb2c34b36b-64674702.us-west-2.elb.amazonaws.com/llm-test/qwen32b-a/v1/completions"
+ENDPOINT = "GATEWAY_URL_REQUIRED/llm-test/qwen32b-a/v1/completions"
 
 class DiagnosticResults:
     def __init__(self):

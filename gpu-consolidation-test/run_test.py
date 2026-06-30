@@ -45,14 +45,7 @@ from traffic_generator import MetricsCollector, RequestGenerator
 # CONFIGURATION
 # ==============================================================================
 
-# Default gateway URL (can override with --gateway-url)
-DEFAULT_GATEWAY = "http://aefc7e10f44604760a801dfb2c34b36b-64674702.us-west-2.elb.amazonaws.com"
-
-# Endpoint - using qwen32b-a for both tenants
-ENDPOINT = f"{DEFAULT_GATEWAY}/llm-test/qwen32b-a/v1/completions"
-
 # Model name
-MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 
 # Request configuration
 INPUT_TOKENS = 100
@@ -201,10 +194,9 @@ async def run_test(args: argparse.Namespace):
     traffic_pattern = args.traffic_pattern
 
     # Override gateway URL if provided
-    endpoint = ENDPOINT
-    if args.gateway_url:
-        gateway = args.gateway_url
-        endpoint = f"{gateway}/llm-test/qwen32b-a/v1/completions"
+    if not args.gateway_url:
+        raise ValueError("--gateway-url is required")
+    endpoint = args.gateway_url
 
     # Configure tenants - both same priority
     tenants = [
@@ -259,10 +251,18 @@ async def run_test(args: argparse.Namespace):
             metrics=metrics,
             session=session,
             traffic_pattern=traffic_pattern,
-            model_name=MODEL_NAME,
+            model_name=args.model_name,
             input_tokens=INPUT_TOKENS,
             output_tokens=OUTPUT_TOKENS
         )
+        # Map priority to inference objective for flow control headers
+        if t.priority == 100:
+            gen.inference_objective = "llm-premium"
+        elif t.priority == -10:
+            gen.inference_objective = "llm-batch"
+        else:
+            gen.inference_objective = "llm-standard"
+
         for t in tenants
     ]
 
@@ -395,6 +395,12 @@ def parse_args():
         "--gateway-url",
         default=None,
         help="Override gateway URL (default: AWS ELB)"
+    )
+
+    parser.add_argument(
+        "--model-name",
+        required=True,
+        help="Model name to send in request payload (required)"
     )
 
     return parser.parse_args()
